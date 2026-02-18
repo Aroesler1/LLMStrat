@@ -7,6 +7,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
+import inspect
+import random
 from typing import Dict, List, Optional
 
 from loguru import logger
@@ -92,7 +94,7 @@ class AlpacaBroker(BrokerAPI):
     Requires `alpaca-py`.
     """
 
-    def __init__(self, api_key: str, secret_key: str, paper: bool = True):
+    def __init__(self, api_key: str, secret_key: str, paper: bool = True, timeout_seconds: float = 30.0):
         try:
             from alpaca.trading.client import TradingClient
             from alpaca.data.historical.stock import StockHistoricalDataClient
@@ -100,8 +102,16 @@ class AlpacaBroker(BrokerAPI):
             raise ImportError("alpaca-py is required for AlpacaBroker") from e
 
         self.paper = paper
-        self.trading = TradingClient(api_key=api_key, secret_key=secret_key, paper=paper)
-        self.data = StockHistoricalDataClient(api_key=api_key, secret_key=secret_key)
+        timeout_seconds = float(timeout_seconds)
+        trading_kwargs = {"api_key": api_key, "secret_key": secret_key, "paper": paper}
+        if "timeout" in inspect.signature(TradingClient).parameters:
+            trading_kwargs["timeout"] = timeout_seconds
+        self.trading = TradingClient(**trading_kwargs)
+
+        data_kwargs = {"api_key": api_key, "secret_key": secret_key}
+        if "timeout" in inspect.signature(StockHistoricalDataClient).parameters:
+            data_kwargs["timeout"] = timeout_seconds
+        self.data = StockHistoricalDataClient(**data_kwargs)
 
     def get_account(self) -> AccountInfo:
         a = self.trading.get_account()
@@ -239,9 +249,16 @@ class MockBroker(BrokerAPI):
     In-memory broker for tests and dry runs.
     """
 
-    def __init__(self, equity: float = 100000.0):
+    def __init__(
+        self,
+        equity: float = 100000.0,
+        slippage_bps: float = 0.0,
+        fill_probability: float = 1.0,
+    ):
         self._equity = float(equity)
         self._cash = float(equity)
+        self._slippage_bps = max(0.0, float(slippage_bps))
+        self._fill_probability = min(1.0, max(0.0, float(fill_probability)))
         self._positions: Dict[str, PositionInfo] = {}
         self._orders: Dict[str, OrderStatus] = {}
         self._order_counter = 0
@@ -261,29 +278,50 @@ class MockBroker(BrokerAPI):
         self._order_counter += 1
         oid = f"mock-{self._order_counter}"
         px = float(limit_price) if (order_type == "limit" and limit_price is not None) else self._last_prices.get(symbol, 100.0)
+        side = str(side).lower()
         qty = abs(float(qty))
-        notion = qty * px
-        if side.lower() == "buy":
+        if self._fill_probability < 1.0 and random.random() > self._fill_probability:
+            status = OrderStatus(
+                broker_order_id=oid,
+                symbol=symbol,
+                side=side,
+                qty=qty,
+                filled_qty=0.0,
+                filled_avg_price=0.0,
+                status="rejected",
+                submitted_at=datetime.utcnow(),
+                filled_at=None,
+            )
+            self._orders[oid] = status
+            return oid
+
+        fill_px = px
+        if self._slippage_bps > 0:
+            slip = self._slippage_bps / 10000.0
+            fill_px = px * (1.0 + slip) if side == "buy" else px * (1.0 - slip)
+
+        notion = qty * fill_px
+        if side == "buy":
             self._cash -= notion
             pos = self._positions.get(symbol)
             if pos is None:
-                pos = PositionInfo(symbol=symbol, qty=0.0, avg_entry_price=px, market_value=0.0, current_price=px, unrealized_pl=0.0)
+                pos = PositionInfo(symbol=symbol, qty=0.0, avg_entry_price=fill_px, market_value=0.0, current_price=fill_px, unrealized_pl=0.0)
             new_qty = pos.qty + qty
-            pos.avg_entry_price = ((pos.avg_entry_price * pos.qty) + notion) / new_qty if new_qty > 0 else px
+            pos.avg_entry_price = ((pos.avg_entry_price * pos.qty) + notion) / new_qty if new_qty > 0 else fill_px
             pos.qty = new_qty
-            pos.current_price = px
-            pos.market_value = pos.qty * px
-            pos.unrealized_pl = (px - pos.avg_entry_price) * pos.qty
+            pos.current_price = fill_px
+            pos.market_value = pos.qty * fill_px
+            pos.unrealized_pl = (fill_px - pos.avg_entry_price) * pos.qty
             self._positions[symbol] = pos
         else:
             pos = self._positions.get(symbol)
             if pos is not None:
                 sell_qty = min(qty, abs(pos.qty))
-                self._cash += sell_qty * px
+                self._cash += sell_qty * fill_px
                 pos.qty -= sell_qty
-                pos.current_price = px
-                pos.market_value = pos.qty * px
-                pos.unrealized_pl = (px - pos.avg_entry_price) * pos.qty
+                pos.current_price = fill_px
+                pos.market_value = pos.qty * fill_px
+                pos.unrealized_pl = (fill_px - pos.avg_entry_price) * pos.qty
                 if abs(pos.qty) <= 1e-9:
                     self._positions.pop(symbol, None)
                 else:
@@ -291,10 +329,10 @@ class MockBroker(BrokerAPI):
         status = OrderStatus(
             broker_order_id=oid,
             symbol=symbol,
-            side=side.lower(),
+            side=side,
             qty=qty,
             filled_qty=qty,
-            filled_avg_price=px,
+            filled_avg_price=fill_px,
             status="filled",
             submitted_at=datetime.utcnow(),
             filled_at=datetime.utcnow(),

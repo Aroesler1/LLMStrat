@@ -6,6 +6,7 @@ broker:
   paper: true
   api_key_env: ALPACA_API_KEY
   secret_key_env: ALPACA_SECRET_KEY
+  timeout_seconds: 30
 
 storage:
   db_path: data/results/trading/paper_state.sqlite

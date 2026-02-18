@@ -55,3 +55,27 @@ def test_risk_drawdown_is_critical_severity():
     )
     assert not res.approved
     assert res.severity == "critical"
+
+
+def test_risk_blocks_leverage_breach():
+    engine = RiskEngine(
+        RiskLimits(
+            max_position_pct=1.0,
+            max_positions=10,
+            min_positions=1,
+            max_turnover_daily=2.0,
+            max_leverage=1.0,
+            min_cash_pct=0.0,
+            max_portfolio_value=1_000_000_000.0,
+        )
+    )
+    res = engine.check_portfolio(
+        target_weights={"AAPL": 0.8, "MSFT": 0.7},
+        current_weights={},
+        portfolio_value=100_000.0,
+        daily_pnl=0.0,
+        peak_value=100_000.0,
+        cash=10_000.0,
+    )
+    assert not res.approved
+    assert any("Leverage exceeded" in v for v in res.violations)

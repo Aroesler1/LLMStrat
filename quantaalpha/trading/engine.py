@@ -9,12 +9,14 @@ import json
 import os
 import subprocess
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 import yaml
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from quantaalpha.storage.database import DatabaseManager
 from quantaalpha.storage.event_log import EventLogger
@@ -43,6 +45,19 @@ class TradingEngineResult:
             "message": self.message,
             "payload": self.payload,
         }
+
+
+class TradingConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    broker: Dict[str, Any] = Field(default_factory=dict)
+    storage: Dict[str, Any] = Field(default_factory=dict)
+    session: Dict[str, Any] = Field(default_factory=dict)
+    execution: Dict[str, Any] = Field(default_factory=dict)
+    scheduler: Dict[str, Any] = Field(default_factory=dict)
+    risk: Dict[str, Any] = Field(default_factory=dict)
+    signals: Dict[str, Any] = Field(default_factory=dict)
+    monitor: Dict[str, Any] = Field(default_factory=dict)
 
 
 class TradingEngine:
@@ -108,7 +123,12 @@ class TradingEngine:
         if overrides:
             cls._deep_update(cfg, overrides)
 
-        return cls(config=cfg, config_path=str(path))
+        try:
+            validated = TradingConfig.model_validate(cfg).model_dump()
+        except ValidationError as e:
+            raise ValueError(f"Invalid trading config: {e}") from e
+
+        return cls(config=validated, config_path=str(path))
 
     @staticmethod
     def _deep_update(base: Dict[str, Any], patch: Dict[str, Any]):
@@ -160,10 +180,22 @@ class TradingEngine:
                     "Alpaca broker selected but API keys are missing. "
                     "Set ALPACA_API_KEY / ALPACA_SECRET_KEY or configure broker.api_key/secret_key."
                 )
-            return AlpacaBroker(api_key=api_key, secret_key=secret_key, paper=paper)
+            timeout_seconds = float(broker_cfg.get("timeout_seconds", 30.0))
+            return AlpacaBroker(
+                api_key=api_key,
+                secret_key=secret_key,
+                paper=paper,
+                timeout_seconds=timeout_seconds,
+            )
 
         mock_equity = float(broker_cfg.get("mock_equity", 100000.0))
-        return MockBroker(equity=mock_equity)
+        slippage_bps = float(broker_cfg.get("slippage_bps", 0.0))
+        fill_probability = float(broker_cfg.get("fill_probability", 1.0))
+        return MockBroker(
+            equity=mock_equity,
+            slippage_bps=slippage_bps,
+            fill_probability=fill_probability,
+        )
 
     def enable_trading(self, enabled: bool):
         self.db.upsert_runtime_state("trading_enabled", bool(enabled))
@@ -432,7 +464,7 @@ class TradingEngine:
             self.alerts.info(msg, data={"reason": reason, "drift": drift}, event_type="rebalance")
             return TradingEngineResult(status="ok", message=msg, payload={"snapshot": snapshot, "drift": drift})
 
-        rebalance_id = now.strftime("%Y%m%d_%H%M%S")
+        rebalance_id = f"{now.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
         order_ids = self.orders.submit_orders(proposed_orders, rebalance_id=rebalance_id)
         self.orders.poll_terminal(
             order_ids=order_ids,

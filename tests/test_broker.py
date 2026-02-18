@@ -20,3 +20,24 @@ def test_mock_broker_buy_and_sell_flow():
 
     positions = b.get_positions()
     assert positions[0].qty == 5
+
+
+def test_mock_broker_applies_slippage_to_fill_price():
+    b = MockBroker(equity=10000, slippage_bps=50.0, fill_probability=1.0)
+    b.set_price("AAPL", 100.0)
+
+    oid = b.submit_order(symbol="AAPL", qty=1, side="buy", order_type="market")
+    st = b.get_order_status(oid)
+    assert st.status == "filled"
+    assert abs(st.filled_avg_price - 100.5) < 1e-9
+
+
+def test_mock_broker_rejects_order_when_fill_probability_zero():
+    b = MockBroker(equity=10000, fill_probability=0.0)
+    b.set_price("AAPL", 100.0)
+
+    oid = b.submit_order(symbol="AAPL", qty=5, side="buy", order_type="market")
+    st = b.get_order_status(oid)
+    assert st.status == "rejected"
+    assert st.filled_qty == 0.0
+    assert b.get_positions() == []

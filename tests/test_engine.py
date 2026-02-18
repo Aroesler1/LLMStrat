@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
+
+import pytest
 
 from quantaalpha.trading.engine import TradingEngine
 
@@ -109,3 +112,26 @@ def test_stop_flatten_retries_once_on_failure(tmp_path, monkeypatch):
     engine.stop(flatten=True)
 
     assert attempts["liquidate"] == 2
+
+
+def test_rebalance_uses_uuid_suffix_for_rebalance_id(tmp_path):
+    cfg = _engine_config(tmp_path=tmp_path)
+    cfg["execution"]["dry_run"] = False
+    engine = TradingEngine(cfg)
+
+    result = engine.rebalance_once(reason="uuid_check")
+
+    assert result.status == "ok"
+    rid = str(result.payload["rebalance_id"])
+    assert re.match(r"^\d{8}_\d{6}_[0-9a-f]{8}$", rid)
+
+
+def test_from_yaml_rejects_invalid_config_shape(tmp_path):
+    cfg_path = tmp_path / "invalid_trading.yaml"
+    cfg_path.write_text(
+        "broker:\n  provider: mock\nexecution: []\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError):
+        TradingEngine.from_yaml(str(cfg_path))

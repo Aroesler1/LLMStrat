@@ -11,7 +11,6 @@ from typing import Dict, List
 @dataclass
 class RiskLimits:
     max_position_pct: float = 0.10
-    max_sector_pct: float = 0.30
     max_drawdown_pct: float = 0.15
     max_daily_loss_pct: float = 0.05
     max_turnover_daily: float = 0.40
@@ -65,6 +64,10 @@ class RiskEngine:
         for sym, w in target_weights.items():
             if w > self.limits.max_position_pct:
                 violations.append(f"Position cap exceeded: {sym}={w:.2%} > {self.limits.max_position_pct:.2%}")
+
+        gross_exposure = sum(abs(float(w)) for w in target_weights.values())
+        if gross_exposure > self.limits.max_leverage:
+            violations.append(f"Leverage exceeded: {gross_exposure:.2f} > {self.limits.max_leverage:.2f}")
 
         turnover = sum(abs(target_weights.get(sym, 0.0) - current_weights.get(sym, 0.0)) for sym in set(target_weights) | set(current_weights))
         if turnover > self.limits.max_turnover_daily:
