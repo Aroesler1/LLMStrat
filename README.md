@@ -267,8 +267,12 @@ quantaalpha stop --config_path configs/trading.yaml --paper=True
     - `backtest.mode: qlib` (TopkDropout)
     - `backtest.mode: enhanced` (MVO/risk parity/Kelly/equal)
   - walk-forward (`walk_forward.*`)
+    - `walk_forward.validation_pct` holds out the tail of each train window for validation before OOS test
   - factor postprocess (`factor_postprocess.*`)
   - costs (`cost_model.*`)
+    - CN-oriented defaults are configured conservatively (`spread_bps=8`, `slippage_bps=12`, `min_trade_cost=5`)
+  - universe controls (`universe.*`)
+    - set `use_historical_universe: true` and `historical_universe_file` (date/symbol CSV) to reduce survivorship bias
 - `configs/backtest_paper_best.yaml`
   - independent OOS validation profile
 
@@ -315,6 +319,9 @@ bash start.sh
   - disabling dry-run,
   - setting API keys.
 - Always validate strategies out-of-sample and under conservative cost/risk assumptions before any real capital deployment.
+- Survivorship bias warning:
+  - default static universes can overstate performance.
+  - prefer historical membership files via `universe.use_historical_universe` + `universe.historical_universe_file` when available.
 
 ## Documentation
 

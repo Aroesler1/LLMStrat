@@ -17,21 +17,21 @@ import numpy as np
 
 @dataclass
 class CostModelConfig:
-    spread_bps: float = 5.0
-    slippage_bps: float = 5.0
+    spread_bps: float = 8.0
+    slippage_bps: float = 12.0
     commission_per_share: float = 0.0
-    min_trade_cost: float = 0.0
-    adv_impact_coefficient: float = 0.1
+    min_trade_cost: float = 5.0
+    adv_impact_coefficient: float = 0.15
 
     @classmethod
     def from_dict(cls, cfg: Optional[Dict[str, Any]]) -> "CostModelConfig":
         cfg = cfg or {}
         return cls(
-            spread_bps=float(cfg.get("spread_bps", 5.0)),
-            slippage_bps=float(cfg.get("slippage_bps", 5.0)),
+            spread_bps=float(cfg.get("spread_bps", 8.0)),
+            slippage_bps=float(cfg.get("slippage_bps", 12.0)),
             commission_per_share=float(cfg.get("commission_per_share", 0.0)),
-            min_trade_cost=float(cfg.get("min_trade_cost", 0.0)),
-            adv_impact_coefficient=float(cfg.get("adv_impact_coefficient", 0.1)),
+            min_trade_cost=float(cfg.get("min_trade_cost", 5.0)),
+            adv_impact_coefficient=float(cfg.get("adv_impact_coefficient", 0.15)),
         )
 
 

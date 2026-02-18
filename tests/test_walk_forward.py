@@ -35,3 +35,30 @@ def test_walk_forward_run_smoke():
     out = engine.run(x, y, fit_predict, evaluate)
     assert "windows" in out
     assert len(out["windows"]) > 0
+
+
+def test_walk_forward_validation_pct_splits_training_window():
+    idx = pd.MultiIndex.from_product(
+        [pd.date_range("2021-01-01", "2023-12-31", freq="B"), ["A", "B", "C"]],
+        names=["datetime", "instrument"],
+    )
+    x = pd.DataFrame({"f1": range(len(idx))}, index=idx)
+    y = pd.Series(0.01, index=idx)
+
+    cfg = WalkForwardConfig(enabled=True, train_months=12, test_months=3, step_months=3, validation_pct=0.2)
+    engine = WalkForwardEngine(cfg)
+    fit_sizes = []
+
+    def fit_predict(x_train, y_train, x_test):
+        fit_sizes.append(len(x_train))
+        return pd.Series(0.5, index=x_test.index)
+
+    def evaluate(pred, window):
+        dates = pred.index.get_level_values("datetime").unique()
+        oos = pd.Series(0.001, index=dates)
+        return {"oos_returns": oos, "daily": pd.DataFrame({"portfolio_return": oos}), "metrics": {}}
+
+    out = engine.run(x, y, fit_predict, evaluate)
+    assert len(out["windows"]) > 0
+    assert len(fit_sizes) == len(out["windows"])
+    assert "validation_window" in out["windows"][0]

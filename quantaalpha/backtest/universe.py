@@ -28,6 +28,8 @@ class UniverseConfig:
     symbols: Optional[list[str]] = None
     symbols_file: Optional[str] = None
     csv_path: Optional[str] = None
+    use_historical_universe: bool = False
+    historical_universe_file: Optional[str] = None
     min_price: float = 0.0
     max_price: float = 0.0
     min_adv: float = 0.0
@@ -43,6 +45,8 @@ class UniverseConfig:
             symbols=cfg.get("symbols"),
             symbols_file=cfg.get("symbols_file"),
             csv_path=cfg.get("csv_path") or cfg.get("symbols_file"),
+            use_historical_universe=bool(cfg.get("use_historical_universe", False)),
+            historical_universe_file=cfg.get("historical_universe_file"),
             min_price=_safe_float(cfg.get("min_price", 0.0)),
             max_price=_safe_float(cfg.get("max_price", 0.0)),
             min_adv=_safe_float(cfg.get("min_adv", cfg.get("min_avg_dollar_volume", 0.0))),
@@ -114,3 +118,46 @@ def apply_liquidity_filters(
                 continue
         keep.append(sym)
     return keep
+
+
+def load_historical_universe_mask(
+    cfg: UniverseConfig,
+    dates: pd.Index,
+    symbols: Iterable[str],
+) -> Optional[pd.DataFrame]:
+    if not cfg.use_historical_universe or not cfg.historical_universe_file:
+        return None
+
+    path = Path(cfg.historical_universe_file).expanduser()
+    if not path.exists():
+        return None
+
+    hist = pd.read_csv(path)
+    date_col = next((c for c in ("date", "datetime", "trade_date") if c in hist.columns), None)
+    symbol_col = next((c for c in ("symbol", "ticker", "instrument") if c in hist.columns), None)
+    if date_col is None or symbol_col is None:
+        raise ValueError(
+            f"Historical universe file must include date/symbol columns: {path}"
+        )
+
+    hist = hist[[date_col, symbol_col]].dropna()
+    if hist.empty:
+        return None
+    hist[date_col] = pd.to_datetime(hist[date_col]).dt.normalize()
+    hist[symbol_col] = hist[symbol_col].astype(str).str.upper()
+    hist["active"] = True
+
+    membership = (
+        hist.pivot_table(index=date_col, columns=symbol_col, values="active", aggfunc="max", fill_value=False)
+        .astype(bool)
+    )
+
+    target_dates = pd.DatetimeIndex(pd.to_datetime(dates))
+    target_symbols = [str(s).upper() for s in symbols]
+    aligned = membership.reindex(
+        index=target_dates.normalize(),
+        columns=target_symbols,
+        fill_value=False,
+    )
+    aligned.index = target_dates
+    return aligned.astype(bool)

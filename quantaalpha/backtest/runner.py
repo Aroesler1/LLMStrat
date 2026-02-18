@@ -660,7 +660,12 @@ class BacktestRunner:
     ) -> Tuple[pd.DataFrame, pd.Series]:
         """Load close matrix for universe and benchmark returns."""
         from qlib.data import D
-        from .universe import UniverseConfig, apply_liquidity_filters, load_universe
+        from .universe import (
+            UniverseConfig,
+            apply_liquidity_filters,
+            load_historical_universe_mask,
+            load_universe,
+        )
 
         market = self.config["data"]["market"]
         benchmark = self.config["backtest"]["backtest"].get("benchmark")
@@ -706,6 +711,20 @@ class BacktestRunner:
                 close_mat = close_mat.reindex(columns=selected)
                 if vol_mat is not None:
                     vol_mat = vol_mat.reindex(columns=selected)
+
+            hist_mask = load_historical_universe_mask(
+                cfg=u_cfg,
+                dates=close_mat.index,
+                symbols=close_mat.columns,
+            )
+            if hist_mask is not None:
+                close_mat = close_mat.where(hist_mask)
+                if vol_mat is not None:
+                    vol_mat = vol_mat.where(hist_mask)
+                close_mat = close_mat.dropna(axis=1, how="all")
+                if vol_mat is not None:
+                    vol_mat = vol_mat.reindex(columns=close_mat.columns)
+
             dollar_volume = close_mat * vol_mat if vol_mat is not None else None
             filtered = apply_liquidity_filters(
                 symbols=list(close_mat.columns),
@@ -922,6 +941,7 @@ class BacktestRunner:
             # Generate prediction
             pred = model.predict(dataset)
             logger.debug(f"  Pred shape: {pred.shape}")
+            metrics.update(self._compute_segment_ic_metrics(pred))
             
             # Save prediction
             sr = SignalRecord(recorder=R.get_recorder(), model=model, dataset=dataset)
@@ -977,6 +997,81 @@ class BacktestRunner:
                 traceback.print_exc()
         
         return metrics
+
+    def _compute_segment_ic_metrics(self, pred: pd.Series) -> Dict[str, float]:
+        """Compute IC/RankIC per segment (train/valid/test)."""
+        try:
+            label_expr = self.config["dataset"]["label"]
+            label_df = self._compute_label(label_expr)
+            if isinstance(label_df, pd.DataFrame):
+                label_df = self._normalize_multiindex(label_df, "segment_ic_label")
+            if isinstance(label_df, pd.DataFrame) and not label_df.empty:
+                label_s = label_df.iloc[:, 0]
+            elif isinstance(label_df, pd.Series):
+                label_s = label_df
+            else:
+                return {}
+            label_s = label_s.astype(float).replace([np.inf, -np.inf], np.nan).dropna()
+
+            pred_s = pred.astype(float).replace([np.inf, -np.inf], np.nan).dropna()
+            if isinstance(pred_s.index, pd.MultiIndex):
+                pred_df = self._normalize_multiindex(pred_s.to_frame(name="pred"), "segment_ic_pred")
+                pred_s = pred_df["pred"]
+            common_index = pred_s.index.intersection(label_s.index)
+            if len(common_index) == 0:
+                return {}
+            pred_s = pred_s.loc[common_index]
+            label_s = label_s.loc[common_index]
+
+            dt_level = "datetime" if isinstance(pred_s.index, pd.MultiIndex) and "datetime" in pred_s.index.names else 0
+            dt_index = pd.to_datetime(pred_s.index.get_level_values(dt_level))
+            segments = (self.config.get("dataset") or {}).get("segments") or {}
+
+            out: Dict[str, float] = {}
+            for seg_name in ("train", "valid", "test"):
+                seg = segments.get(seg_name)
+                if not seg:
+                    continue
+                seg_start = pd.Timestamp(seg[0])
+                seg_end = pd.Timestamp(seg[1])
+                mask = (dt_index >= seg_start) & (dt_index <= seg_end)
+                if int(mask.sum()) == 0:
+                    continue
+                seg_pred = pred_s.loc[mask]
+                seg_label = label_s.loc[mask]
+                ic_mean, ic_ir = self._cross_sectional_ic_stats(seg_pred, seg_label, method="pearson")
+                ric_mean, ric_ir = self._cross_sectional_ic_stats(seg_pred, seg_label, method="spearman")
+                out[f"{seg_name}_IC"] = ic_mean
+                out[f"{seg_name}_ICIR"] = ic_ir
+                out[f"{seg_name}_Rank IC"] = ric_mean
+                out[f"{seg_name}_Rank ICIR"] = ric_ir
+            return out
+        except Exception as e:
+            logger.warning(f"Segment IC calculation failed: {e}")
+            return {}
+
+    @staticmethod
+    def _cross_sectional_ic_stats(
+        pred_s: pd.Series,
+        label_s: pd.Series,
+        method: str = "pearson",
+    ) -> Tuple[float, float]:
+        if pred_s.empty or label_s.empty:
+            return 0.0, 0.0
+        df = pd.DataFrame({"pred": pred_s, "label": label_s}).dropna()
+        if df.empty:
+            return 0.0, 0.0
+        dt_level = "datetime" if isinstance(df.index, pd.MultiIndex) and "datetime" in df.index.names else 0
+        ic_series = df.groupby(level=dt_level).apply(
+            lambda x: x["pred"].corr(x["label"], method=method) if len(x) > 1 else np.nan
+        )
+        ic_series = ic_series.replace([np.inf, -np.inf], np.nan).dropna()
+        if ic_series.empty:
+            return 0.0, 0.0
+        ic_mean = float(ic_series.mean())
+        ic_std = float(ic_series.std())
+        ic_ir = float(ic_mean / ic_std) if ic_std > 0 else 0.0
+        return ic_mean, ic_ir
 
     def _run_qlib_portfolio_backtest(
         self,
@@ -1149,6 +1244,15 @@ class BacktestRunner:
         print("[IC Metrics]")
         print(f"  IC: {_f(metrics.get('IC'))}  ICIR: {_f(metrics.get('ICIR'))}")
         print(f"  Rank IC: {_f(metrics.get('Rank IC'))}  Rank ICIR: {_f(metrics.get('Rank ICIR'))}")
+        for seg in ("train", "valid", "test"):
+            seg_ic = metrics.get(f"{seg}_IC")
+            if seg_ic is None:
+                continue
+            print(
+                f"  {seg.upper()} IC: {_f(seg_ic)}  {seg.upper()} ICIR: {_f(metrics.get(f'{seg}_ICIR'))}  "
+                f"{seg.upper()} Rank IC: {_f(metrics.get(f'{seg}_Rank IC'))}  "
+                f"{seg.upper()} Rank ICIR: {_f(metrics.get(f'{seg}_Rank ICIR'))}"
+            )
         print("[Strategy Metrics]")
         print(f"  Ann. Return: {_f(metrics.get('annualized_return'), '.4f')}  Max DD: {_f(metrics.get('max_drawdown'), '.4f')}")
         print(f"  Info Ratio: {_f(metrics.get('information_ratio'), '.4f')}  Calmar: {_f(metrics.get('calmar_ratio'), '.4f')}")
@@ -1211,6 +1315,9 @@ class BacktestRunner:
             "ICIR": metrics.get('ICIR'),
             "Rank_IC": metrics.get('Rank IC'),
             "Rank_ICIR": metrics.get('Rank ICIR'),
+            "train_IC": metrics.get("train_IC"),
+            "valid_IC": metrics.get("valid_IC"),
+            "test_IC": metrics.get("test_IC"),
             "annualized_return": ann_ret,
             "information_ratio": metrics.get('information_ratio'),
             "sharpe_ratio": metrics.get('sharpe_ratio'),

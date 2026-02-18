@@ -160,19 +160,22 @@ walk_forward:
   train_months: 36
   test_months: 3
   step_months: 3
+  validation_pct: 0.2
   expanding_window: false
   retrain_model: true
 
 cost_model:
-  spread_bps: 5.0
-  slippage_bps: 5.0
+  spread_bps: 8.0
+  slippage_bps: 12.0
   commission_per_share: 0.0
-  min_trade_cost: 0.0
-  adv_impact_coefficient: 0.1
+  min_trade_cost: 5.0
+  adv_impact_coefficient: 0.15
 
 universe:
   symbols: []
   symbols_file: null
+  use_historical_universe: false
+  historical_universe_file: null
   min_avg_dollar_volume: null
   min_price: null
   max_price: null
