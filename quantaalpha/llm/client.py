@@ -588,6 +588,12 @@ class APIBackend:
         This function attempts to handle several edge cases.
         """
 
+        model = self.chat_model
+
+        # tiktoken may not yet map newer GPT-5 aliases like "gpt-5.2".
+        if model.startswith("gpt-5"):
+            return tiktoken.get_encoding("o200k_base")
+
         # 1) cases
         def _azure_patch(model: str) -> str:
             """
@@ -596,16 +602,15 @@ class APIBackend:
             """
             return model.replace("_", "-")
 
-        model = self.chat_model
         try:
             return tiktoken.encoding_for_model(model)
         except KeyError:
-            logger.warning(f"Failed to get encoder. Trying to patch the model name")
+            logger.warning("Failed to get encoder via model map. Trying patched model aliases.")
             for patch_func in [_azure_patch]:
                 try:
                     return tiktoken.encoding_for_model(patch_func(model))
                 except KeyError:
-                    logger.error(f"Failed to get encoder even after patching with {patch_func.__name__}")
+                    logger.warning(f"Failed to get encoder after patching with {patch_func.__name__}")
                     raise
 
     def build_chat_session(

@@ -39,3 +39,21 @@ def test_calculate_token_from_messages_handles_unknown_model_name(monkeypatch) -
     tokens = APIBackend.calculate_token_from_messages(backend, messages)
 
     assert tokens > 0
+
+
+def test_get_encoder_maps_gpt5_alias_to_o200k_base(monkeypatch) -> None:
+    backend = object.__new__(APIBackend)
+    backend.chat_model = "gpt-5.2"
+
+    called = {}
+
+    def _fake_get_encoding(name: str):
+        called["name"] = name
+        return _DummyEncoder()
+
+    monkeypatch.setattr("quantaalpha.llm.client.tiktoken.get_encoding", _fake_get_encoding)
+
+    encoder = APIBackend._get_encoder(backend)
+
+    assert isinstance(encoder, _DummyEncoder)
+    assert called["name"] == "o200k_base"
