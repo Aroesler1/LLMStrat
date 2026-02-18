@@ -342,12 +342,6 @@ If you use this project in research, please cite the original upstream paper:
 
 ---
 
-## ⭐ Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=Aroesler1/LLMStrat&type=date&legend=top-left)](https://www.star-history.com/#Aroesler1/LLMStrat&type=date&legend=top-left)
-
----
-
 <div align="center">
 
 **⭐ If LLMStrat helps you, please give it a star!**
