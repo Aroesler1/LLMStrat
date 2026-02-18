@@ -55,6 +55,8 @@ jsonschema>=4.0            # JSON schema validation for factor libraries
 # Build & versioning
 # -----------------------------------------------------------------------------
 setuptools-scm             # Dynamic version from SCM
+ruff                       # Static lint checks
+mypy                       # Static type checks
 
 # -----------------------------------------------------------------------------
 # Pinned core dependencies

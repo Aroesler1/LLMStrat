@@ -52,3 +52,10 @@ docs = {file = ["requirements/docs.txt"]}
 [tool.setuptools_scm]
 local_scheme = "no-local-version"
 version_scheme = "guess-next-dev"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E9", "F63", "F7"]

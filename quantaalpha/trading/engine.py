@@ -519,7 +519,7 @@ class TradingEngine:
             "peak_equity": self.db.get_runtime_state("peak_equity", None),
         }
 
-        account = None
+        account: Dict[str, Any]
         try:
             a = self.broker.get_account()
             account = {
@@ -603,7 +603,7 @@ class TradingEngine:
             "turnover": float(turnover),
         }
         self.db.upsert_daily_snapshot(payload)
-        return {**payload, "date": payload["date"].isoformat()}
+        return {**payload, "date": now.date().isoformat()}
 
     def _build_risk_context(self, now: datetime, equity: float) -> tuple[Dict[str, float], float, float]:
         daily_state = self._ensure_daily_state(now, equity)

@@ -5,7 +5,7 @@ Risk limits and checks for retail trading runtime.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -23,7 +23,7 @@ class RiskLimits:
     flatten_on_kill: bool = True
 
     @classmethod
-    def from_dict(cls, cfg: Dict) -> "RiskLimits":
+    def from_dict(cls, cfg: Optional[Dict[str, Any]]) -> "RiskLimits":
         cfg = cfg or {}
         out = cls()
         for k in out.__dict__.keys():
