@@ -4,7 +4,8 @@ import logging
 import warnings
 
 EXPECTED_PYTHONWARNING_RULES = [
-    "ignore:Mean of empty slice:RuntimeWarning:qlib\\.utils\\.index_data",
+    "ignore:Mean of empty slice:RuntimeWarning",
+    "ignore:A value is trying to be set on a copy of a slice from a DataFrame:Warning",
     "ignore:.*Gym has been unmaintained since 2022.*:UserWarning",
 ]
 
@@ -26,7 +27,11 @@ def apply_runtime_warning_filters() -> None:
         "ignore",
         message="Mean of empty slice",
         category=RuntimeWarning,
-        module=r"qlib\.utils\.index_data",
+    )
+    warnings.filterwarnings(
+        "ignore",
+        message="A value is trying to be set on a copy of a slice from a DataFrame",
+        category=Warning,
     )
     warnings.filterwarnings(
         "ignore",

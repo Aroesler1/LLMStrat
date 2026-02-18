@@ -12,7 +12,11 @@ warnings.filterwarnings(
     "ignore",
     message="Mean of empty slice",
     category=RuntimeWarning,
-    module=r"qlib\.utils\.index_data",
+)
+warnings.filterwarnings(
+    "ignore",
+    message="A value is trying to be set on a copy of a slice from a DataFrame",
+    category=Warning,
 )
 warnings.filterwarnings(
     "ignore",
