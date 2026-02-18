@@ -1,0 +1,78 @@
+# Trading runtime configuration (retail cadence, non-HFT)
+
+broker:
+  provider: mock  # mock | alpaca
+  paper: true
+  api_key_env: ALPACA_API_KEY
+  secret_key_env: ALPACA_SECRET_KEY
+  mock_equity: 100000.0
+
+storage:
+  db_path: data/results/trading/trading_state.sqlite
+
+session:
+  timezone: America/New_York
+  open_time: "09:30"
+  close_time: "16:00"
+  holidays: []
+
+execution:
+  mode: paper
+  require_market_open: false
+  fractional_shares: true
+  cash_buffer_pct: 0.02
+  min_trade_dollars: 25.0
+  rate_limit_per_second: 5.0
+  dry_run: true
+  poll_timeout_seconds: 180
+  poll_interval_seconds: 2.0
+
+scheduler:
+  enabled: true
+  timezone: America/New_York
+  rebalance_cron: "45 15 * * 1-5"   # 3:45pm ET weekdays
+  heartbeat_seconds: 60
+
+risk:
+  max_position_pct: 0.10
+  max_sector_pct: 0.35
+  max_drawdown_pct: 0.15
+  max_daily_loss_pct: 0.05
+  max_turnover_daily: 0.50
+  max_positions: 50
+  min_positions: 5
+  max_leverage: 1.0
+  min_cash_pct: 0.02
+  max_portfolio_value: 500000.0
+  max_single_order_value: 20000.0
+  flatten_on_kill: true
+
+signals:
+  mode: momentum                 # momentum | file
+  topk: 20
+  lookback_bars: 21
+  min_price: 2.0
+  max_weight: 0.10
+  long_only: false
+  universe:
+    - SPY
+    - QQQ
+    - IWM
+    - XLK
+    - XLF
+    - XLI
+    - XLE
+    - XLY
+    - XLV
+    - XLP
+    - XLU
+    - XLB
+  universe_file: null
+  signal_file: null
+  symbol_column: symbol
+  score_column: score
+  weight_column: weight
+  date_column: date
+
+monitor:
+  stale_seconds: 600

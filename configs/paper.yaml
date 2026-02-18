@@ -1,0 +1,58 @@
+# Paper trading profile (Alpaca)
+# Requires ALPACA_API_KEY and ALPACA_SECRET_KEY in .env or shell.
+
+broker:
+  provider: alpaca
+  paper: true
+  api_key_env: ALPACA_API_KEY
+  secret_key_env: ALPACA_SECRET_KEY
+
+storage:
+  db_path: data/results/trading/paper_state.sqlite
+
+execution:
+  mode: paper
+  require_market_open: true
+  fractional_shares: true
+  cash_buffer_pct: 0.02
+  min_trade_dollars: 25.0
+  rate_limit_per_second: 5.0
+  dry_run: false
+  poll_timeout_seconds: 240
+  poll_interval_seconds: 2.0
+
+scheduler:
+  enabled: true
+  timezone: America/New_York
+  rebalance_cron: "45 15 * * 1-5"
+  heartbeat_seconds: 60
+
+signals:
+  mode: file
+  signal_file: data/results/trading/latest_signals.csv
+  symbol_column: symbol
+  score_column: score
+  weight_column: weight
+  date_column: date
+  topk: 25
+  max_weight: 0.08
+  long_only: true
+
+risk:
+  max_position_pct: 0.08
+  max_drawdown_pct: 0.12
+  max_daily_loss_pct: 0.04
+  max_turnover_daily: 0.40
+  max_positions: 30
+  min_positions: 5
+  min_cash_pct: 0.02
+  max_portfolio_value: 250000.0
+  max_single_order_value: 15000.0
+
+session:
+  timezone: America/New_York
+  open_time: "09:30"
+  close_time: "16:00"
+
+monitor:
+  stale_seconds: 600
