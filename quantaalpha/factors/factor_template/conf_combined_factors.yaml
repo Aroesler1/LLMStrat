@@ -9,6 +9,8 @@
 qlib_init:
     provider_uri: "~/.qlib/qlib_data/cn_data"
     region: cn
+    # Keep qrun output focused on actionable issues.
+    logging_level: 40
 
 market: &market csi300
 benchmark: &benchmark SH000300

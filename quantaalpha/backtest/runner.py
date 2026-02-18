@@ -14,6 +14,7 @@ from typing import Dict, List, Optional, Any, Tuple
 import numpy as np
 import pandas as pd
 import yaml
+from quantaalpha.utils.warning_policy import apply_runtime_warning_filters
 
 project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
@@ -28,6 +29,7 @@ class BacktestRunner:
         self.config_path = Path(config_path)
         self.config = self._load_config()
         self._qlib_initialized = False
+        apply_runtime_warning_filters()
 
     def _load_config(self) -> Dict:
         with open(self.config_path, 'r', encoding='utf-8') as f:
@@ -39,12 +41,15 @@ class BacktestRunner:
         if self._qlib_initialized:
             return
         import os
+        import contextlib
+        import io
         # Some restricted environments block semaphore limit syscalls used by
         # joblib's multiprocessing backend. Default to single-process mode
         # unless explicitly overridden.
         if os.environ.get("QA_ENABLE_JOBLIB_MP", "0") != "1":
             os.environ.setdefault("JOBLIB_MULTIPROCESSING", "0")
-        import qlib
+        with contextlib.redirect_stderr(io.StringIO()):
+            import qlib
         provider_uri = (
             os.environ.get('QLIB_DATA_DIR')
             or os.environ.get('QLIB_PROVIDER_URI')
@@ -59,15 +64,20 @@ class BacktestRunner:
         joblib_backend = os.environ.get(
             "QA_QLIB_JOBLIB_BACKEND", qlib_cfg.get("joblib_backend", "threading")
         )
+        qlib_logging_level = int(os.environ.get("QA_QLIB_LOGGING_LEVEL", qlib_cfg.get("logging_level", 40)))
         qlib.init(
             provider_uri=provider_uri,
             region=region,
             kernels=kernels,
             joblib_backend=joblib_backend,
+            logging_level=qlib_logging_level,
         )
+        logging.getLogger("qlib.BaseExecutor").setLevel(logging.ERROR)
         self._qlib_initialized = True
         logger.info(
-            f"Qlib initialized: {provider_uri} (region={region}, kernels={kernels}, joblib_backend={joblib_backend})"
+            "Qlib initialized: "
+            f"{provider_uri} (region={region}, kernels={kernels}, joblib_backend={joblib_backend}, "
+            f"logging_level={qlib_logging_level})"
         )
 
     def run(self,
@@ -916,9 +926,12 @@ class BacktestRunner:
     
     def _train_and_backtest(self, dataset, exp_name: str, rec_name: str, output_name: Optional[str] = None) -> Dict:
         """Train model and run backtest."""
-        from qlib.contrib.model.gbdt import LGBModel
+        import contextlib
+        import io
         from qlib.workflow import R
         from qlib.workflow.record_temp import SignalRecord, SigAnaRecord
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            from qlib.contrib.model.gbdt import LGBModel
         
         model_config = self.config['model']
         backtest_config = self.config['backtest']['backtest']

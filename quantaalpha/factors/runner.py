@@ -9,6 +9,7 @@ from pandarallel import pandarallel
 from quantaalpha.core.conf import RD_AGENT_SETTINGS
 from quantaalpha.core.utils import cache_with_pickle, multiprocessing_wrapper
 from quantaalpha.factors.coder.config import FACTOR_COSTEER_SETTINGS
+from quantaalpha.utils.warning_policy import build_pythonwarnings_filter
 
 pandarallel.initialize(verbose=1)
 
@@ -19,6 +20,7 @@ from quantaalpha.factors.experiment import QlibFactorExperiment
 
 DIRNAME = Path(__file__).absolute().resolve().parent
 DIRNAME_local = Path.cwd()
+
 
 # class QlibFactorExpWorkspace:
 
@@ -181,6 +183,7 @@ class QlibFactorRunner(CachedRunner[QlibFactorExperiment]):
         timeout_shim_dir = Path(__file__).resolve().parents[2] / "scripts" / "bin"
         if timeout_shim_dir.exists():
             run_env["PATH"] = f"{timeout_shim_dir}:{os.environ.get('PATH', '')}"
+        run_env["PYTHONWARNINGS"] = build_pythonwarnings_filter(os.environ.get("PYTHONWARNINGS"))
 
         result_tuple = exp.experiment_workspace.execute(
             qlib_config_name=config_name,
