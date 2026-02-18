@@ -37,6 +37,22 @@ from quantaalpha.log.time import measure_time
 from quantaalpha.llm.config import LLM_SETTINGS
 
 
+def _ensure_conda_default_env() -> None:
+    """
+    rdagent expects CONDA_DEFAULT_ENV to be present.
+    Support local/venv runs by deriving a fallback value.
+    """
+    if os.environ.get("CONDA_DEFAULT_ENV"):
+        return
+    fallback = os.environ.get("CONDA_ENV_NAME")
+    if not fallback:
+        venv_path = os.environ.get("VIRTUAL_ENV")
+        if venv_path:
+            fallback = Path(venv_path).name
+    if not fallback:
+        fallback = "quantaalpha"
+    os.environ["CONDA_DEFAULT_ENV"] = fallback
+    logger.info(f"CONDA_DEFAULT_ENV was not set; using '{fallback}'")
 
 
 def force_timeout():
@@ -176,6 +192,7 @@ def _parallel_task_worker(
     Args: task, directions, step_n, use_local, user_direction, log_root, result_queue, task_idx.
     """
     try:
+        _ensure_conda_default_env()
         from quantaalpha.core.conf import RD_AGENT_SETTINGS
         RD_AGENT_SETTINGS.use_file_lock = False
         RD_AGENT_SETTINGS.pickle_cache_folder_path_str = str(
@@ -279,11 +296,15 @@ def _run_tasks_parallel(
         else:
             logger.error(f"Task {result['task_idx']} failed: {result['error']}")
             logger.error(result.get('traceback', ''))
+            original_task = tasks[result["task_idx"]]
+            result["task"] = original_task
+            results.append(result)
 
     for p in processes:
         p.join()
 
-    logger.info(f"Parallel tasks done: {len(results)}/{len(tasks)} succeeded")
+    success_count = sum(1 for r in results if r.get("success"))
+    logger.info(f"Parallel tasks done: {success_count}/{len(tasks)} succeeded")
     
     return results
 
@@ -321,6 +342,9 @@ def run_evolution_loop(
     parallel_enabled = bool(evolution_cfg.get("parallel_enabled", False))
     fresh_start = bool(evolution_cfg.get("fresh_start", True))
     cleanup_on_finish = bool(evolution_cfg.get("cleanup_on_finish", False))
+    mo_cfg = evolution_cfg.get("multi_objective", {}) or {}
+    mo_enabled = bool(mo_cfg.get("enabled", False))
+    mo_weights = mo_cfg.get("weights", {}) or {}
 
     # Generate initial directions
     planning_enabled = bool(planning_cfg.get("enabled", False))
@@ -366,6 +390,8 @@ def run_evolution_loop(
         mutation_prompt_path=str(mutation_prompt_path) if mutation_prompt_path.exists() else None,
         crossover_prompt_path=str(mutation_prompt_path) if mutation_prompt_path.exists() else None,
         fresh_start=fresh_start,
+        multi_objective_enabled=mo_enabled,
+        multi_objective_weights=mo_weights,
     )
 
     controller = EvolutionController(config)
@@ -386,6 +412,10 @@ def run_evolution_loop(
         logger.info("Mode: original only (no evolution)")
     logger.info(f"Parent selection: {parent_selection_strategy}" +
                (f" (top_percent={top_percent_threshold})" if parent_selection_strategy == "top_percent_plus_random" else ""))
+    if mo_enabled:
+        logger.info(f"Multi-objective scoring: enabled, weights={mo_weights}")
+    else:
+        logger.info("Multi-objective scoring: disabled (RankIC-only selection)")
     logger.info(f"Parallel execution: {'on' if parallel_enabled else 'off'}")
     logger.info("="*60)
 
@@ -426,11 +456,25 @@ def run_evolution_loop(
                     )
                     controller.report_task_complete(task, trajectory)
                     completed_tasks.append(task)
-                    logger.info(f"Trajectory done: {trajectory.trajectory_id}, RankIC={trajectory.get_primary_metric()}")
+                    rank_ic = trajectory.get_primary_metric()
+                    if mo_enabled:
+                        score = trajectory.extra_info.get("multi_objective_score")
+                        logger.info(f"Trajectory done: {trajectory.trajectory_id}, score={score}, RankIC={rank_ic}")
+                    else:
+                        logger.info(f"Trajectory done: {trajectory.trajectory_id}, RankIC={rank_ic}")
+                else:
+                    task = result["task"]
+                    controller.report_task_failed(task, result.get("error"))
+                    completed_tasks.append(task)
 
             controller.advance_phase_after_parallel_completion(completed_tasks)
 
     else:
+        max_consecutive_failures = max(
+            1,
+            int(os.environ.get("QA_MAX_CONSECUTIVE_TASK_FAILURES", "3")),
+        )
+        consecutive_failures = 0
         while not controller.is_complete():
             if stop_event and stop_event.is_set():
                 logger.info("Stop signal received, ending evolution loop")
@@ -461,11 +505,25 @@ def run_evolution_loop(
                     feedback=traj_data.get("feedback"),
                 )
                 controller.report_task_complete(task, trajectory)
-                logger.info(f"Task done: trajectory_id={trajectory.trajectory_id}, RankIC={trajectory.get_primary_metric()}")
+                rank_ic = trajectory.get_primary_metric()
+                consecutive_failures = 0
+                if mo_enabled:
+                    score = trajectory.extra_info.get("multi_objective_score")
+                    logger.info(f"Task done: trajectory_id={trajectory.trajectory_id}, score={score}, RankIC={rank_ic}")
+                else:
+                    logger.info(f"Task done: trajectory_id={trajectory.trajectory_id}, RankIC={rank_ic}")
             except Exception as e:
                 logger.error(f"Task failed: {e}")
                 import traceback
                 logger.error(traceback.format_exc())
+                controller.report_task_failed(task, str(e))
+                consecutive_failures += 1
+                if consecutive_failures >= max_consecutive_failures:
+                    logger.error(
+                        "Stopping evolution loop due to consecutive task failures: "
+                        f"{consecutive_failures}/{max_consecutive_failures}"
+                    )
+                    break
                 continue
 
     state_path = Path(log_root) / "evolution_state.json"
@@ -476,7 +534,12 @@ def run_evolution_loop(
     for i, t in enumerate(best_trajs):
         metric = t.get_primary_metric()
         metric_str = f"{metric:.4f}" if metric is not None else "N/A"
-        logger.info(f"  {i+1}. {t.trajectory_id}: phase={t.phase.value}, RankIC={metric_str}")
+        if mo_enabled:
+            score = t.extra_info.get("multi_objective_score")
+            score_str = f"{float(score):.4f}" if score is not None else "N/A"
+            logger.info(f"  {i+1}. {t.trajectory_id}: phase={t.phase.value}, score={score_str}, RankIC={metric_str}")
+        else:
+            logger.info(f"  {i+1}. {t.trajectory_id}: phase={t.phase.value}, RankIC={metric_str}")
     logger.info(f"Pool stats: {controller.pool.get_statistics()}")
     logger.info("="*60)
     if cleanup_on_finish:
@@ -507,12 +570,29 @@ def main(path=None, step_n=100, direction=None, stop_event=None, config_path=Non
 
     """
     try:
+        _ensure_conda_default_env()
         from quantaalpha.core.conf import RD_AGENT_SETTINGS
         logger.info("="*60)
         logger.info("Experiment config")
         logger.info(f"  Workspace: {RD_AGENT_SETTINGS.workspace_path}")
         logger.info(f"  Cache dir: {RD_AGENT_SETTINGS.pickle_cache_folder_path_str}")
         logger.info(f"  Cache enabled: {RD_AGENT_SETTINGS.cache_with_pickle}")
+        logger.info("="*60)
+        # Log effective LLM runtime settings so runs can be audited/reproduced.
+        chat_model = os.environ.get("CHAT_MODEL") or LLM_SETTINGS.chat_model or ""
+        reasoning_model = os.environ.get("REASONING_MODEL") or LLM_SETTINGS.reasoning_model or chat_model
+        reasoning_effort = (
+            os.environ.get("QA_REASONING_EFFORT")
+            or os.environ.get("REASONING_EFFORT")
+            or LLM_SETTINGS.reasoning_effort
+            or "none"
+        )
+        base_url = os.environ.get("OPENAI_BASE_URL") or LLM_SETTINGS.openai_base_url or "<unset>"
+        logger.info("LLM runtime")
+        logger.info(f"  OPENAI_BASE_URL: {base_url}")
+        logger.info(f"  CHAT_MODEL: {chat_model or '<unset>'}")
+        logger.info(f"  REASONING_MODEL: {reasoning_model or '<unset>'}")
+        logger.info(f"  QA_REASONING_EFFORT: {reasoning_effort}")
         logger.info("="*60)
 
         # Config file default: project_root/configs/

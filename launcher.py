@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-QuantaAlpha unified launcher.
+LLMStrat unified launcher.
 
 Usage:
     python launcher.py mine --direction "price-volume factor mining"

@@ -1,329 +1,336 @@
-<div align="center">
-  <img src="docs/images/overview.jpg" alt="QuantaAlpha Framework Overview" width="90%" style="border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); margin: 10px 0;"/>
-</div>
+# LLMStrat
 
-<div align="center">
+LLM-driven alpha factor mining, backtesting, and retail-oriented paper-trading runtime.
 
-  <h1 align="center" style="color: #2196F3; font-size: 32px; font-weight: 700; margin: 20px 0; line-height: 1.4;">
-    🌟 QuantaAlpha: <span style="color: #555; font-weight: 400; font-size: 20px;"><em>LLM-Driven Self-Evolving Framework for Factor Mining</em></span>
-  </h1>
+This repository is maintained at `Aroesler1/LLMStrat` and keeps the `quantaalpha` module path for runtime compatibility.
 
-  <p align="center" style="font-size: 14px; color: #888; max-width: 700px; margin: 10px auto;">
-    🧬 <em>Achieving superior quantitative alpha through trajectory-based self-evolution with diversified planning initialization, trajectory-level evolution, and structured hypothesis-code constraint</em>
-  </p>
+- Paper: https://arxiv.org/abs/2602.07085
 
-  <p style="margin: 20px 0;">
-    <a href="https://arxiv.org/abs/2602.07085"><img src="https://img.shields.io/badge/arXiv-b31b1b.svg?style=flat-square&logo=arxiv&logoColor=white" /></a>
-    <a href="#"><img src="https://img.shields.io/badge/License-MIT-00A98F.svg?style=flat-square&logo=opensourceinitiative&logoColor=white" /></a>
-    <a href="#"><img src="https://img.shields.io/badge/Python-3.10+-3776AB.svg?style=flat-square&logo=python&logoColor=white" /></a>
-    <a href="https://github.com/QuantaAlpha/QuantaAlpha"><img src="https://img.shields.io/github/stars/QuantaAlpha/QuantaAlpha?style=flat-square&logo=github&logoColor=white&color=yellow" /></a>
-  </p>
+## What This Repository Contains
 
-  <p style="font-size: 16px; color: #666; margin: 15px 0; font-weight: 500;">
-    🌐 <a href="README.md" style="text-decoration: none; color: #0066cc;">English</a> | <a href="README_CN.md" style="text-decoration: none; color: #0066cc;">中文</a>
-  </p>
+- Factor mining pipeline:
+  - `quantaalpha/pipeline/factor_mining.py`
+  - `run.sh`
+  - `configs/experiment.yaml`
+  - `configs/experiment_paper_best.yaml`
+- Backtesting engine:
+  - `quantaalpha/backtest/run_backtest.py`
+  - `quantaalpha/backtest/runner.py`
+  - `configs/backtest.yaml`
+  - `configs/backtest_paper_best.yaml`
+- Trading runtime (mock/paper/live broker adapters):
+  - `quantaalpha/trading/*`
+  - `configs/trading.yaml`
+  - `configs/paper.yaml`
+- Turnkey orchestration scripts:
+  - `scripts/run_paper_best_repro.sh`
+  - `scripts/run_baseline_then_upgraded.sh`
+  - `scripts/run_locked_upgrade_suite.py`
+  - `scripts/run_oos_sweep.py`
 
-</div>
+## Installation
 
-<div align="center" style="margin: 30px 0;">
-  <a href="#-quick-start" style="text-decoration: none; margin: 0 4px;">
-    <img src="https://img.shields.io/badge/🚀_Quick_Start-Get_Started-4CAF50?style=flat-square&logo=rocket&logoColor=white&labelColor=2E7D32" alt="Quick Start" />
-  </a>
-  <a href="#️-web-dashboard" style="text-decoration: none; margin: 0 4px;">
-    <img src="https://img.shields.io/badge/🖥️_Web_UI-Try_It_Now-FF9800?style=flat-square&logo=play&logoColor=white&labelColor=F57C00" alt="Web Dashboard" />
-  </a>
-  <a href="docs/user_guide.md" style="text-decoration: none; margin: 0 4px;">
-    <img src="https://img.shields.io/badge/📖_User_Guide-Complete_Guide-2196F3?style=flat-square&logo=gitbook&logoColor=white&labelColor=1565C0" alt="User Guide" />
-  </a>
-</div>
+### 1. Python environment
 
----
+`pyproject.toml` declares Python `>=3.10` and classifiers for `3.10`/`3.11`.
 
-## 🎯 Overview
-
-**QuantaAlpha** transforms how you discover quantitative alpha factors by combining LLM intelligence with evolutionary strategies. Just describe your research direction, and watch as factors are automatically mined, evolved, and validated through self-evolving trajectories.
-
-<p align="center">💬 Research Direction → 🧩 Diversified Planning → 🔄 Trajectory → ✅ Validated Alpha Factors</p>
-
-**Demo**: Below is a short demo of the full flow from research direction to factor mining and backtesting UI. 
-
-<div align="center">
-  <video src="https://github.com/user-attachments/assets/726511ce-a384-4727-a7be-948a2cf05e4b"
-         controls
-         style="max-width: 90%; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
-    Your browser does not support the video tag.
-    <a href="https://github.com/user-attachments/assets/726511ce-a384-4727-a7be-948a2cf05e4b">Watch the demo video</a>.
-  </video>
-  <p style="font-size: 12px; color: #666; margin-top: 8px;">
-    ▶ Click to play the QuantaAlpha end-to-end workflow demo.
-  </p>
-</div>
-
----
-
-## 📊 Performance
-
-### 1. Factor Performance
-
-<div align="center">
-  <img src="docs/images/figure3.png" width="90%" alt="Zero-Shot Transfer" style="border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);"/>
-  <p style="font-size: 12px; color: #666;">CSI 300 factors transferred to CSI 500/S&P 500</p>
-</div>
-
-### 2. Key Results
-
-<div align="center">
-
-| Dimension | Metric | Performance |
-| :---: | :---: | :---: |
-| **Predictive Power** | Information Coefficient (IC) | **0.1501** |
-| | Rank IC | **0.1465** |
-| **Strategy Return** | Annualized Excess Return (ARR) | **27.75%** |
-| | Max Drawdown (MDD) | **7.98%** |
-| | Calmar Ratio (CR) | **3.4774** |
-
-</div>
-
-<div align="center">
-  <img src="docs/images/主实验.png" width="90%" alt="Main Experiment Results" style="border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);"/>
-</div>
-
----
-
-## 🚀 Quick Start
-
-### 1. Clone & Install
+Recommended:
 
 ```bash
-git clone https://github.com/QuantaAlpha/QuantaAlpha.git
-cd QuantaAlpha
-conda create -n quantaalpha python=3.10
+conda create -n quantaalpha python=3.11
 conda activate quantaalpha
-# Install the package in development mode
-SETUPTOOLS_SCM_PRETEND_VERSION=0.1.0 pip install -e .
+```
 
-# Install additional dependencies
+### 2. Install package
+
+```bash
+pip install -e .
 pip install -r requirements.txt
 ```
 
-### 2. Configure Environment
+### 3. Environment file
 
 ```bash
 cp configs/.env.example .env
 ```
 
-Edit `.env` with your settings:
+Fill required fields in `.env` (from `configs/.env.example`):
+
+- Paths:
+  - `QLIB_DATA_DIR`
+  - `DATA_RESULTS_DIR`
+- LLM:
+  - `OPENAI_API_KEY`
+  - `OPENAI_BASE_URL`
+  - `CHAT_MODEL`
+  - `REASONING_MODEL`
+- Optional GPT-5 effort control:
+  - `QA_REASONING_EFFORT` (`none|low|medium|high|xhigh`)
+- Optional paper/live broker credentials:
+  - `ALPACA_API_KEY`
+  - `ALPACA_SECRET_KEY`
+
+## Data Requirements
+
+### Qlib market data
+
+`run.sh` validates that `QLIB_DATA_DIR` exists and contains:
+
+- `calendars/`
+- `features/`
+- `instruments/`
+
+### Factor execution HDF5 files
+
+Defaults are defined in `quantaalpha/factors/coder/config.py`:
+
+- `git_ignore_folder/factor_implementation_source_data/daily_pv.h5`
+- `git_ignore_folder/factor_implementation_source_data_debug/daily_pv.h5`
+
+You can override via environment variables:
+
+- `FACTOR_CoSTEER_DATA_FOLDER`
+- `FACTOR_CoSTEER_DATA_FOLDER_DEBUG`
+
+Reference dataset metadata is in `hf_data/README.md` (`LLMStrat/qlib_csi300`).
+
+## CLI Overview
+
+Entry point from `pyproject.toml`:
+
+- `quantaalpha = quantaalpha.cli:app`
+- `llmstrat = quantaalpha.cli:app`
+
+Main CLI commands (`quantaalpha/cli.py`):
+
+- `quantaalpha mine`
+- `quantaalpha backtest`
+- `quantaalpha trade ...`
+- `quantaalpha paper`
+- `quantaalpha status`
+- `quantaalpha rebalance`
+- `quantaalpha stop`
+- `quantaalpha health_check`
+- `quantaalpha collect_info`
+
+## How To Run
+
+### A. Factor mining
+
+Preferred wrapper (`run.sh` loads `.env`, validates data, sets runtime guards):
 
 ```bash
-# === Required: Data Paths ===
-QLIB_DATA_DIR=/path/to/your/qlib/cn_data      # Qlib data directory
-DATA_RESULTS_DIR=/path/to/your/results         # Output directory
-
-# === Required: LLM API ===
-OPENAI_API_KEY=your-api-key
-OPENAI_BASE_URL=https://your-llm-provider/v1   # e.g. DashScope, OpenAI
-CHAT_MODEL=deepseek-v3                         # or gpt-4, qwen-max, etc.
-REASONING_MODEL=deepseek-v3
-```
-
-### 3. Prepare Data
-
-QuantaAlpha requires two types of data: **Qlib market data** (for backtesting) and **pre-computed price-volume HDF5 files** (for factor mining). We provide all of them on HuggingFace for convenience.
-
-> **Dataset**: [https://huggingface.co/datasets/QuantaAlpha/qlib_csi300](https://huggingface.co/datasets/QuantaAlpha/qlib_csi300)
-
-| File | Description | Size | Usage |
-| :--- | :--- | :--- | :--- |
-| `cn_data.zip` | Qlib raw market data (A-share, 2016–2025) | 493 MB | Required for Qlib initialization & backtesting |
-| `daily_pv.h5` | Pre-computed full price-volume data | 398 MB | Required for factor mining |
-| `daily_pv_debug.h5` | Pre-computed debug subset (smaller) | 1.41 MB | Required for factor mining (debug/validation) |
-
-> **Why provide HDF5 files?** The system can auto-generate `daily_pv.h5` from Qlib data on first run, but this process is very slow. Downloading pre-built HDF5 files saves significant time.
-
-#### Step 1: Download
-
-```bash
-# Option A: Using huggingface-cli (recommended)
-pip install huggingface_hub
-huggingface-cli download QuantaAlpha/qlib_csi300 --repo-type dataset --local-dir ./hf_data
-
-# Option B: Using wget
-mkdir -p hf_data
-wget -P hf_data https://huggingface.co/datasets/QuantaAlpha/qlib_csi300/resolve/main/cn_data.zip
-wget -P hf_data https://huggingface.co/datasets/QuantaAlpha/qlib_csi300/resolve/main/daily_pv.h5
-wget -P hf_data https://huggingface.co/datasets/QuantaAlpha/qlib_csi300/resolve/main/daily_pv_debug.h5
-```
-
-#### Step 2: Extract & Place Files
-
-```bash
-# 1. Extract Qlib data
-unzip hf_data/cn_data.zip -d ./data/qlib
-
-# 2. Place HDF5 files into the default data directories
-mkdir -p git_ignore_folder/factor_implementation_source_data
-mkdir -p git_ignore_folder/factor_implementation_source_data_debug
-
-cp hf_data/daily_pv.h5       git_ignore_folder/factor_implementation_source_data/daily_pv.h5
-cp hf_data/daily_pv_debug.h5  git_ignore_folder/factor_implementation_source_data_debug/daily_pv.h5
-```
-
-> **Note**: `daily_pv_debug.h5` must be renamed to `daily_pv.h5` when placed in the debug directory.
-
-#### Step 3: Configure Paths in `.env`
-
-```bash
-# Point to the extracted Qlib data directory (must contain calendars/, features/, instruments/)
-QLIB_DATA_DIR=./data/qlib/cn_data
-
-# Output directory for experiment results
-DATA_RESULTS_DIR=./data/results
-```
-
-The HDF5 data directories can also be customized via environment variables if you prefer a different location:
-
-```bash
-# Optional: override default HDF5 data paths
-FACTOR_CoSTEER_DATA_FOLDER=/your/custom/path/factor_source_data
-FACTOR_CoSTEER_DATA_FOLDER_DEBUG=/your/custom/path/factor_source_data_debug
-```
-
-### 4. Run Factor Mining
-
-```bash
-./run.sh "<your input>"
-
-# Example: Run with a research direction
 ./run.sh "Price-Volume Factor Mining"
-
-# Example: Run with custom factor library suffix
-./run.sh "Microstructure Factors" "exp_micro"
 ```
 
-The experiment will automatically mine, evolve, and validate alpha factors, and save all discovered factors to `all_factors_library*.json`.
-
-### 5. Independent Backtesting
-
-After mining, combine factors from the library for a full-period backtest:
+With custom factor-library suffix:
 
 ```bash
-# Backtest with custom factors only
+./run.sh "Price-Volume Factor Mining" "my_run_suffix"
+```
+
+Direct CLI form:
+
+```bash
+quantaalpha mine --direction "Price-Volume Factor Mining" --config_path configs/experiment.yaml
+```
+
+Paper-style config:
+
+```bash
+quantaalpha mine --direction "Price-Volume Factor Mining" --config_path configs/experiment_paper_best.yaml
+```
+
+### B. End-to-end paper-best reproduction
+
+Single script (mining + two OOS backtests):
+
+```bash
+bash scripts/run_paper_best_repro.sh "Price-Volume Factor Mining" "paper_best"
+```
+
+This script runs:
+
+1. `CONFIG_PATH="configs/experiment_paper_best.yaml" ./run.sh ...`
+2. `python -m quantaalpha.backtest.run_backtest -c configs/backtest_paper_best.yaml --factor-source custom ...`
+3. `python -m quantaalpha.backtest.run_backtest -c configs/backtest_paper_best.yaml --factor-source combined ...`
+
+### C. Independent backtest
+
+Module entrypoint (`quantaalpha/backtest/run_backtest.py`):
+
+```bash
+python -m quantaalpha.backtest.run_backtest -c configs/backtest.yaml --factor-source alpha158_20
+```
+
+Custom factors:
+
+```bash
 python -m quantaalpha.backtest.run_backtest \
   -c configs/backtest.yaml \
   --factor-source custom \
-  --factor-json all_factors_library.json
+  --factor-json data/factorlib/all_factors_library_<suffix>.json
+```
 
-# Combine with Alpha158(20) baseline factors
+Combined official + custom:
+
+```bash
 python -m quantaalpha.backtest.run_backtest \
   -c configs/backtest.yaml \
   --factor-source combined \
-  --factor-json all_factors_library.json
-
-# Dry run (load factors only, skip backtest)
-python -m quantaalpha.backtest.run_backtest \
-  -c configs/backtest.yaml \
-  --factor-source custom \
-  --factor-json all_factors_library.json \
-  --dry-run -v
+  --factor-json data/factorlib/all_factors_library_<suffix>.json
 ```
 
-Results are saved to the directory specified in `configs/backtest.yaml` (`experiment.output_dir`).
+Useful flags:
 
-> 📘 Need help? Check our comprehensive **[User Guide](docs/user_guide.md)** for advanced configuration, experiment reproduction, and detailed usage examples.
+- `--dry-run` (load factors only, skip backtest)
+- `--walk-forward` (override config to enable walk-forward)
+- `--skip-uncached`
+- `-e/--experiment`
+- `-v/--verbose`
 
----
+### D. Locked upgrade protocol and sweeps
 
-## 🖥️ Web UI
-
-QuantaAlpha provides a web-based dashboard where you can complete the entire workflow through a visual interface — no command line needed.
+Baseline + locked upgraded suite:
 
 ```bash
-conda activate quantaalpha
-cd frontend-v2
-bash start.sh
-# Visit http://localhost:3000
+bash scripts/run_baseline_then_upgraded.sh "Price-Volume Factor Mining" "paper_best_gpt52" "combined"
 ```
 
-- **⚙️ Settings**: Configure LLM API, data paths, and experiment parameters directly in the UI
-- **⛏️ Factor Mining**: Start experiments with natural language input and monitor progress in real-time
-- **📚 Factor Library**: Browse, search, and filter all discovered factors with quality classifications
-- **📈 Independent Backtest**: Select a factor library and run full-period backtests with visual results
+Run locked suite directly:
 
----
+```bash
+python scripts/run_locked_upgrade_suite.py \
+  --factor-source combined \
+  --factor-json data/factorlib/all_factors_library_<suffix>.json
+```
 
-## 💬 User Community
+Run OOS sweep:
 
-<div align="center">
+```bash
+python scripts/run_oos_sweep.py
+```
 
-| WeChat Group |
-| :---: |
-| <img src="docs/images/WeChat.jpg" width="250" alt="WeChat Group" /> |
+### E. Paper/sim trading runtime
 
-</div>
+Status / rebalance with default trading profile:
 
----
+```bash
+quantaalpha status --config_path configs/trading.yaml --paper=True
+quantaalpha rebalance --config_path configs/trading.yaml --paper=True --dry_run=True
+```
 
-## 🤝 Contributing
+Start runtime once:
 
-We welcome all forms of contributions to make QuantaAlpha better! Here's how you can get involved:
+```bash
+quantaalpha trade start --config_path configs/trading.yaml --paper=True --once=True
+```
 
-- **🐛 Bug Reports**: Found a bug? [Open an issue](https://github.com/QuantaAlpha/QuantaAlpha/issues) to help us fix it.
-- **💡 Feature Requests**: Have a great idea? [Start a discussion](https://github.com/QuantaAlpha/QuantaAlpha/discussions) to suggest new features.
-- **📝 Docs & Tutorials**: Improve documentation, add usage examples, or write tutorials.
-- **🔧 Code Contributions**: Submit PRs for bug fixes, performance improvements, or new functionality.
-- **🧬 New Factors**: Share high-quality factors discovered in your own runs to benefit the community.
+Alpaca paper profile:
 
----
+```bash
+quantaalpha paper --config_path configs/paper.yaml --once=True
+```
 
-## 🙏 Acknowledgments
+Stop runtime:
 
-Special thanks to:
-- [Qlib](https://github.com/microsoft/qlib) - Quantitative investment platform by Microsoft
-- [RD-Agent](https://github.com/microsoft/RD-Agent) - An automated R&D framework by Microsoft (NeurIPS 2025)
-- [AlphaAgent](https://github.com/RndmVariableQ/AlphaAgent) - Multi-agent alpha factor mining framework (KDD 2025)
+```bash
+quantaalpha stop --config_path configs/trading.yaml --paper=True
+```
 
----
+## Config Reference
 
-## 🌐 About QuantaAlpha
-- QuantaAlpha was founded in **April 2025** by a team of professors, postdocs, PhDs, and master's students from **Tsinghua University, Peking University, CAS, CMU, HKUST**, and more.  
+### Core run configs
 
-🌟 Our mission is to explore the **"quantum"** of intelligence and pioneer the **"alpha"** frontier of agent research — from **CodeAgents** to **self-evolving intelligence**, and further to **financial and cross-domain specialized agents**, we are committed to redefining the boundaries of AI. 
+- `configs/experiment.yaml`
+  - planning (`planning.*`)
+  - execution (`execution.*`)
+  - evolution (`evolution.*`)
+  - quality gates (`quality_gate.*`)
+  - backtest handoff (`backtest.*`)
+- `configs/experiment_paper_best.yaml`
+  - paper-style mining profile
 
-✨ In **2026**, we will continue to produce high-quality research in the following directions:  
+### Backtest configs
 
-- **CodeAgent**: End-to-end autonomous execution of real-world tasks  
+- `configs/backtest.yaml`
+  - factor source (`factor_source.*`)
+  - data and segments (`data.*`, `dataset.segments`)
+  - model (`model.*`)
+  - backtest mode:
+    - `backtest.mode: qlib` (TopkDropout)
+    - `backtest.mode: enhanced` (MVO/risk parity/Kelly/equal)
+  - walk-forward (`walk_forward.*`)
+  - factor postprocess (`factor_postprocess.*`)
+  - costs (`cost_model.*`)
+- `configs/backtest_paper_best.yaml`
+  - independent OOS validation profile
 
-- **DeepResearch**: Deep reasoning and retrieval-augmented intelligence  
+### Trading runtime configs
 
-- **Agentic Reasoning / Agentic RL**: Agent-based reasoning and reinforcement learning 
+- `configs/trading.yaml`
+  - default profile is `broker.provider: mock`, `broker.paper: true`, `execution.mode: paper`, `execution.dry_run: true`
+- `configs/paper.yaml`
+  - Alpaca paper profile (`broker.provider: alpaca`, `paper: true`)
 
-- **Self-evolution and collaborative learning**: Evolution and coordination of multi-agent systems  
+### Environment template
 
-📢 We welcome students and researchers interested in these directions to join us!  
+- `configs/.env.example`
 
-🔗 **Team Homepage**: [QuantaAlpha](https://quantaalpha.github.io/)
+## Output Locations
 
-📧 **Email**: quantaalpha.ai@gmail.com
+Typical outputs:
 
-## 🌐 About AIFin Lab
+- Mining workspaces: `data/results/workspace_exp_*`
+- Mining caches: `data/results/pickle_cache_exp_*`
+- Mined factor library JSON: `data/factorlib/all_factors_library_<suffix>.json`
+- Backtest artifacts: `data/results/*` (depends on each config's `experiment.output_dir`)
+- Trading runtime state:
+  - `data/results/trading/trading_state.sqlite`
+  - `data/results/trading/paper_state.sqlite`
+- Detailed branch/evolution logs: `log/<timestamp>/...`
 
-Initiated by Professor Liwen Zhang from Shanghai University of Finance and Economics (SUFE), **AIFin Lab** is deeply rooted in the interdisciplinary fields of **AI + Finance, Statistics, and Data Science**. The team brings together cutting-edge scholars from top institutions such as SUFE, FDU, SEU, CMU, and CUHK. We are dedicated to building a comprehensive "full-link" system covering data, models, benchmarks, and intelligent prompting. 
+## Web Dashboard (optional)
 
-📢 We are actively looking for talented students (UG/Master/PhD) and researchers worldwide who are passionate about AI Agent security and financial intelligence to join **AIFin Lab**! 
+```bash
+cd frontend-v2
+bash start.sh
+```
 
-📧 **Email**: [aifinlab.sufe@gmail.com](mailto:aifinlab.sufe@gmail.com) (please CC to [zhang.liwen@shufe.edu.cn](mailto:zhang.liwen@shufe.edu.cn))
+`frontend-v2/start.sh` starts backend on `:8000` and frontend dev server on `:3000` (if available).
 
-We look forward to hearing from you!
+## Safety Warnings
+
+- This repository is research software. It is not investment advice.
+- No live trading is enabled by default:
+  - `configs/trading.yaml` uses `mock` broker, paper mode, and `dry_run: true`.
+- Live-like execution requires explicit config and credentials:
+  - switching broker provider,
+  - disabling dry-run,
+  - setting API keys.
+- Always validate strategies out-of-sample and under conservative cost/risk assumptions before any real capital deployment.
+
+## Documentation
+
+See `docs/` for deeper guides:
+
+- `docs/user_guide.md`
+- `docs/experiment_guide.md`
+- `docs/experiment_hyperparameters.md`
+- `docs/research_protocol.md`
+- `docs/paper_to_live_checklist.md`
+- `docs/retail_strategy_guide.md`
+- `docs/ops_runbook.md`
 
 ---
 
 ## 📖 Citation
 
-If you find QuantaAlpha useful in your research, please cite our work:
+If you use this project in research, please cite the original upstream paper:
 
 ```bibtex
 @misc{han2026quantaalphaevolutionaryframeworkllmdriven,
-      title={QuantaAlpha: An Evolutionary Framework for LLM-Driven Alpha Mining}, 
+      title={LLMStrat: An Evolutionary Framework for LLM-Driven Alpha Mining}, 
       author={Jun Han and Shuo Zhang and Wei Li and Zhi Yang and Yifan Dong and Tu Hu and Jialuo Yuan and Xiaomin Yu and Yumo Zhu and Fangqi Lou and Xin Guo and Zhaowei Liu and Tianyi Jiang and Ruichuan An and Jingping Liu and Biao Wu and Rongze Chen and Kunyi Wang and Yifan Wang and Sen Hu and Xinbing Kong and Liwen Zhang and Ronghao Chen and Huacan Wang},
       year={2026},
       eprint={2602.07085},
@@ -337,14 +344,14 @@ If you find QuantaAlpha useful in your research, please cite our work:
 
 ## ⭐ Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=QuantaAlpha/QuantaAlpha&type=date&legend=top-left)](https://www.star-history.com/#QuantaAlpha/QuantaAlpha&type=date&legend=top-left)
+[![Star History Chart](https://api.star-history.com/svg?repos=Aroesler1/LLMStrat&type=date&legend=top-left)](https://www.star-history.com/#Aroesler1/LLMStrat&type=date&legend=top-left)
 
 ---
 
 <div align="center">
 
-**⭐ If QuantaAlpha helps you, please give us a star!**
+**⭐ If LLMStrat helps you, please give it a star!**
 
-Made with ❤️ by the QuantaAlpha Team
+Maintained by Alexander Roesler
 
 </div>

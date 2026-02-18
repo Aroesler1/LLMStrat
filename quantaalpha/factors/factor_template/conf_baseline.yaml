@@ -1,5 +1,5 @@
 # =============================================================================
-# QuantaAlpha small backtest config - baseline (first round, base factors only)
+# LLMStrat small backtest config - baseline (first round, base factors only)
 #
 # Same preprocessing and model params as combined-factor version;
 # uses QlibDataLoader only (no mined factors).

@@ -1,5 +1,5 @@
 # =============================================================================
-# QuantaAlpha small backtest config - combined factors
+# LLMStrat small backtest config - combined factors
 #
 # Adapted from legacy conf: parquet factor data, no ProcessInf (pandas 1.5.x),
 # full preprocessing (Fillna + DropnaLabel + CSRankNorm), learning_rate 0.05,

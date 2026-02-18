@@ -10,7 +10,7 @@ from quantaalpha.core.prompts import Prompts
 from quantaalpha.core.proposal import Hypothesis, Scenario, Trace
 from quantaalpha.core.experiment import Experiment
 from quantaalpha.factors.experiment import QlibFactorExperiment
-from quantaalpha.llm.client import APIBackend, robust_json_parse
+from quantaalpha.llm.client import APIBackend, robust_json_parse, EmptyLLMResponseError
 import os
 import pandas as pd
 from quantaalpha.log import logger
@@ -435,15 +435,40 @@ class AlphaAgentHypothesis2FactorExpression(FactorHypothesis2Experiment):
         # Detect duplicated sub-expressions
         flag = False
         expression_duplication_prompt = None
+        max_attempts = max(1, int(os.environ.get("FACTOR_GEN_MAX_ATTEMPTS", "4")))
+        attempts = 0
         while True:
             if flag:
                 break
-                
-            resp = APIBackend().build_messages_and_create_chat_completion(user_prompt, system_prompt, json_mode=json_flag)
+            attempts += 1
+            if attempts > max_attempts:
+                raise RuntimeError(
+                    f"Failed to generate valid factor JSON after {max_attempts} attempts "
+                    f"(history_limit={history_limit})"
+                )
+
+            try:
+                # Factor-expression generation needs strict JSON; disable reasoning mode
+                # to reduce empty/length-truncated outputs from reasoning-only completions.
+                resp = APIBackend().build_messages_and_create_chat_completion(
+                    user_prompt,
+                    system_prompt,
+                    json_mode=json_flag,
+                    reasoning_flag=False,
+                    shrink_multiple_break=True,
+                )
+            except EmptyLLMResponseError as e:
+                logger.warning(f"LLM returned empty response ({attempts}/{max_attempts}): {e}")
+                continue
+
+            if not str(resp or "").strip():
+                logger.warning(f"LLM returned blank response ({attempts}/{max_attempts}), retrying...")
+                continue
+
             try:
                 response_dict = robust_json_parse(resp)
             except json.JSONDecodeError as e:
-                logger.warning(f"JSON parse failed: {e}, retrying...")
+                logger.warning(f"JSON parse failed ({attempts}/{max_attempts}): {e}, retrying...")
                 continue
             proposed_names = []
             proposed_exprs = []
@@ -453,6 +478,9 @@ class AlphaAgentHypothesis2FactorExpression(FactorHypothesis2Experiment):
                 if not isinstance(factor_data, dict):
                     continue
                 expr = factor_data.get("expression", "")
+                expr = self.factor_regulator.sanitize_expression(expr)
+                factor_data["expression"] = expr
+                response_dict[factor_name] = factor_data
                 description = factor_data.get("description", "")
                 formulation = factor_data.get("formulation", "")
                 variables = factor_data.get("variables", {})
@@ -564,11 +592,11 @@ class AlphaAgentHypothesis2FactorExpression(FactorHypothesis2Experiment):
         self.factor_regulator.add_factor(proposed_names, proposed_exprs)
                 
                 
-        return self.convert_response(resp, trace)
+        return self.convert_response(response_dict, trace)
     
 
-    def convert_response(self, response: str, trace: Trace) -> FactorExperiment:
-        response_dict = robust_json_parse(response)
+    def convert_response(self, response: str | dict, trace: Trace) -> FactorExperiment:
+        response_dict = response if isinstance(response, dict) else robust_json_parse(response)
         tasks = []
 
         for factor_name in response_dict:
@@ -578,6 +606,7 @@ class AlphaAgentHypothesis2FactorExpression(FactorHypothesis2Experiment):
             description = factor_data.get("description", "")
             formulation = factor_data.get("formulation", "")
             expression = factor_data.get("expression", "")
+            expression = self.factor_regulator.sanitize_expression(expression)
             variables = factor_data.get("variables", {})
             tasks.append(
                 FactorTask(

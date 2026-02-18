@@ -7,7 +7,7 @@ requires = [
 
 [project]
 authors = [
-  {email = "tangzy27@mail2.sysu.edu.cn", name = "Ziyi Tang"},
+  {email = "noreply@users.noreply.github.com", name = "Alexander Roesler"},
 ]
 classifiers = [
   "Development Status :: 3 - Alpha",
@@ -16,7 +16,7 @@ classifiers = [
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
 ]
-description = "QuantaAlpha - LLM-Driven Alpha Factor Mining Agent"
+description = "LLMStrat - LLM-Driven Alpha Factor Mining Agent"
 dynamic = [
   "dependencies",
   "optional-dependencies",
@@ -28,16 +28,17 @@ keywords = [
   "Large Language Models",
   "Autonomous Agents",
 ]
-name = "quantaalpha"
+name = "llmstrat"
 readme = "README.md"
 requires-python = ">=3.10"
 
 [project.scripts]
 quantaalpha = "quantaalpha.cli:app"
+llmstrat = "quantaalpha.cli:app"
 
 [project.urls]
-homepage = "https://github.com/QuantaAlpha/quantaalpha"
-issue = "https://github.com/QuantaAlpha/quantaalpha/issues"
+homepage = "https://github.com/Aroesler1/LLMStrat"
+issue = "https://github.com/Aroesler1/LLMStrat/issues"
 
 [tool.setuptools]
 packages = {find = {where = ["."]}}

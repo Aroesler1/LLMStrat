@@ -1,5 +1,5 @@
 """
-QuantaAlpha factor experiment module: Scenario and Experiment classes.
+LLMStrat factor experiment module: Scenario and Experiment classes.
 Uses project QlibFBWorkspace (no ProcessInf / pandas 1.5.x issues).
 """
 

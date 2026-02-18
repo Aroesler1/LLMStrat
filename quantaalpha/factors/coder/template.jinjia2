@@ -9,6 +9,13 @@ from quantaalpha.factors.coder.function_lib import *
 def calculate_factor(expr: str, name: str):
     # stock dataframe
     df = pd.read_hdf('./daily_pv.h5', key='data')
+
+    # Provide a stable derived return feature for expressions that use $return.
+    if '$return' not in df.columns and '$close' in df.columns:
+        if isinstance(df.index, pd.MultiIndex) and 'instrument' in df.index.names:
+            df['$return'] = df.groupby(level='instrument')['$close'].pct_change().fillna(0.0)
+        else:
+            df['$return'] = df['$close'].pct_change().fillna(0.0)
     
     expr = parse_symbol(expr, df.columns)
     expr = parse_expression(expr)

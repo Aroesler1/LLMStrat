@@ -109,10 +109,27 @@ Only the following operations are allowed in expressions:
         
         self.output_dir = Path(self.calc_config.get('output_dir', './computed_factors'))
         self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        if self.data_df is not None:
+            self.data_df = self._ensure_return_column(self.data_df)
+
+    @staticmethod
+    def _ensure_return_column(df: pd.DataFrame) -> pd.DataFrame:
+        """Add $return if missing so parser expressions using $return remain valid."""
+        if '$return' in df.columns or '$close' not in df.columns:
+            return df
+        out = df.copy()
+        if isinstance(out.index, pd.MultiIndex) and 'instrument' in out.index.names:
+            out['$return'] = out.groupby(level='instrument')['$close'].pct_change().fillna(0.0)
+        elif 'instrument' in out.columns:
+            out['$return'] = out.groupby('instrument')['$close'].pct_change().fillna(0.0)
+        else:
+            out['$return'] = out['$close'].pct_change().fillna(0.0)
+        return out
         
     def set_data(self, data_df: pd.DataFrame):
         """Set stock data."""
-        self.data_df = data_df
+        self.data_df = self._ensure_return_column(data_df)
         
     def calculate_factors(self, factors: List[Dict]) -> pd.DataFrame:
         """Compute factor values. factors: list of dicts with factor_name, factor_expression, etc."""
@@ -183,6 +200,7 @@ Only the following operations are allowed in expressions:
             import quantaalpha.factors.coder.function_lib as func_lib
             
             df = self.data_df.copy()
+            df = self._ensure_return_column(df)
             
             parsed_expr = parse_symbol(expr, df.columns)
             parsed_expr = parse_expression(parsed_expr)
@@ -405,4 +423,3 @@ class QlibDataProvider:
         logger.info(f"Loaded stock data: {len(df)} rows")
         
         return df
-

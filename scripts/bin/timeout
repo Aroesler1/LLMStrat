@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Minimal GNU-timeout-compatible wrapper for macOS.
+# Supports:
+#   timeout SECONDS COMMAND...
+#   timeout --kill-after=N SECONDS COMMAND...
+
+set -euo pipefail
+
+if command -v gtimeout >/dev/null 2>&1; then
+  exec gtimeout "$@"
+fi
+
+if command -v timeout >/dev/null 2>&1; then
+  _timeout_bin="$(command -v timeout)"
+  if [[ "${_timeout_bin}" != "${BASH_SOURCE[0]}" ]]; then
+    exec "${_timeout_bin}" "$@"
+  fi
+fi
+
+if [[ $# -lt 2 ]]; then
+  echo "usage: timeout [--kill-after=N] SECONDS COMMAND..." >&2
+  exit 125
+fi
+
+# Ignore kill-after when emulating with subprocess timeout.
+if [[ "${1:-}" == --kill-after=* ]]; then
+  shift
+fi
+
+if [[ $# -lt 2 ]]; then
+  echo "usage: timeout [--kill-after=N] SECONDS COMMAND..." >&2
+  exit 125
+fi
+
+_duration="${1}"
+shift
+
+# Accept plain integer seconds and values with trailing 's'.
+_duration="${_duration%s}"
+
+_py_bin="python"
+if ! command -v "${_py_bin}" >/dev/null 2>&1; then
+  _py_bin="python3"
+fi
+if ! command -v "${_py_bin}" >/dev/null 2>&1; then
+  echo "Neither python nor python3 is available for timeout wrapper." >&2
+  exit 125
+fi
+
+"${_py_bin}" - "${_duration}" "$@" <<'PY'
+import subprocess
+import sys
+
+duration_raw = sys.argv[1]
+cmd = sys.argv[2:]
+
+try:
+    timeout = float(duration_raw)
+except ValueError:
+    print(f"Invalid timeout value: {duration_raw}", file=sys.stderr)
+    sys.exit(125)
+
+try:
+    result = subprocess.run(cmd, timeout=timeout)
+    sys.exit(result.returncode)
+except subprocess.TimeoutExpired:
+    # GNU timeout convention
+    sys.exit(124)
+PY

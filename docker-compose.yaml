@@ -1,0 +1,26 @@
+version: "3.9"
+
+services:
+  trading:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["python", "-m", "quantaalpha.cli", "paper", "--config_path", "configs/paper.yaml", "--once=False"]
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["python", "frontend-v2/backend/app.py"]
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    restart: unless-stopped

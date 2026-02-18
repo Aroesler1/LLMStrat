@@ -1,5 +1,5 @@
 # =============================================================================
-# QuantaAlpha dependency list
+# LLMStrat dependency list
 #
 # Read automatically when installing via `pip install -e .`
 # Only third-party packages actually imported in project code are listed.
@@ -45,6 +45,10 @@ tables                     # HDF5 table storage (PyTables)
 # Infrastructure
 # -----------------------------------------------------------------------------
 docker                     # Docker container management (remote backtest)
+sqlalchemy>=2.0,<3.0       # Trading state persistence (SQLite ORM)
+apscheduler>=3.10,<4.0     # Trading schedule orchestration
+alpaca-py>=0.20            # Alpaca brokerage and market data API
+yfinance>=0.2.40           # Lightweight fallback historical/live bars
 
 # -----------------------------------------------------------------------------
 # Build & versioning

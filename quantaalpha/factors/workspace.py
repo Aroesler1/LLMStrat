@@ -1,5 +1,5 @@
 """
-QuantaAlpha custom workspace.
+LLMStrat custom workspace.
 
 Overrides rdagent QlibFBWorkspace: project-level factor_template overrides default YAML;
 base files (read_exp_res.py, etc.) still from rdagent; init empty git repo in workspace to suppress qlib recorder git output.

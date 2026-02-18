@@ -1,5 +1,5 @@
 """
-QuantaAlpha pipeline settings.
+LLMStrat pipeline settings.
 
 Defines class-path configuration for pipeline components.
 Components are loaded dynamically via string class paths for flexibility.

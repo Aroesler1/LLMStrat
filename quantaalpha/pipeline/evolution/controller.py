@@ -10,7 +10,7 @@ The controller orchestrates the evolutionary process:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 import threading
@@ -64,6 +64,10 @@ class EvolutionConfig:
     
     # Start with empty trajectory pool (ignore existing data)
     fresh_start: bool = True
+
+    # Multi-objective scoring for trajectory ranking/selection
+    multi_objective_enabled: bool = False
+    multi_objective_weights: dict[str, float] = field(default_factory=dict)
 
 
 class EvolutionController:
@@ -526,6 +530,10 @@ class EvolutionController:
             self._crossover_groups = []
             self._crossover_idx = 0
             return
+
+        if self.config.multi_objective_enabled:
+            for t in candidates:
+                t.extra_info["multi_objective_score"] = self._trajectory_score(t)
         
         self._crossover_groups = self.crossover_op.select_crossover_pairs(
             candidates=candidates,
@@ -706,6 +714,24 @@ class EvolutionController:
         
         elif phase == RoundPhase.CROSSOVER:
             logger.info(f"Crossover round complete (group {direction_id})")
+
+    def report_task_failed(self, task: dict[str, Any], error: str | None = None):
+        """
+        Report that a task failed and advance controller state to avoid rerunning
+        the exact same failed task indefinitely.
+        """
+        phase = task.get("phase")
+        direction_id = task.get("direction_id")
+        msg = f"Task failed: phase={getattr(phase, 'value', phase)}, direction={direction_id}"
+        if error:
+            msg += f", error={error}"
+        logger.warning(msg)
+
+        if phase == RoundPhase.ORIGINAL:
+            # Original tasks do not auto-advance indices; mark this direction as done
+            # so the loop can continue with remaining directions.
+            if direction_id is not None:
+                self._directions_completed.add(direction_id)
     
     def create_trajectory_from_loop_result(
         self,
@@ -777,7 +803,7 @@ class EvolutionController:
         # Get parent IDs
         parent_ids = [p.trajectory_id for p in task.get("parent_trajectories", [])]
         
-        return StrategyTrajectory(
+        trajectory = StrategyTrajectory(
             trajectory_id=traj_id,
             direction_id=direction_id,
             round_idx=round_idx,
@@ -791,6 +817,10 @@ class EvolutionController:
             feedback_details=feedback_details,
             parent_ids=parent_ids,
         )
+        if self.config.multi_objective_enabled:
+            score = self._trajectory_score(trajectory)
+            trajectory.extra_info["multi_objective_score"] = score
+        return trajectory
     
     def _extract_metrics(self, result: Any) -> dict[str, Optional[float]]:
         """Extract metrics from backtest result."""
@@ -866,13 +896,29 @@ class EvolutionController:
         """Get the best performing trajectories."""
         all_trajs = self.pool.get_all()
         
-        # Filter to successful trajectories
-        valid = [t for t in all_trajs if t.is_successful()]
+        if self.config.multi_objective_enabled:
+            valid = [t for t in all_trajs if t.backtest_metrics]
+        else:
+            # Filter to successful trajectories (positive RankIC)
+            valid = [t for t in all_trajs if t.is_successful()]
         
-        # Sort by primary metric
-        valid.sort(key=lambda t: t.get_primary_metric() or 0, reverse=True)
+        # Sort by configured trajectory score
+        valid.sort(key=lambda t: self._trajectory_score(t), reverse=True)
         
         return valid[:top_n]
+
+    def _trajectory_score(self, trajectory: StrategyTrajectory) -> float:
+        """Selection score for evolution ranking."""
+        if self.config.multi_objective_enabled:
+            try:
+                from .scoring import score_trajectory
+                score = score_trajectory(trajectory, self.config.multi_objective_weights)
+                trajectory.extra_info["multi_objective_score"] = score
+                return float(score)
+            except Exception as e:
+                logger.warning(f"Multi-objective scoring failed, fallback to RankIC: {e}")
+        metric = trajectory.get_primary_metric()
+        return float(metric) if metric is not None else float("-inf")
     
     def save_state(self, path: Path):
         """Save controller state to disk."""
@@ -893,6 +939,8 @@ class EvolutionController:
                 "crossover_enabled": self.config.crossover_enabled,
                 "crossover_size": self.config.crossover_size,
                 "crossover_n": self.config.crossover_n,
+                "multi_objective_enabled": self.config.multi_objective_enabled,
+                "multi_objective_weights": self.config.multi_objective_weights,
             }
         }
         
@@ -933,4 +981,3 @@ class EvolutionController:
             self._prepare_crossover_groups()
         
         logger.info(f"Loaded evolution state from {path}")
-

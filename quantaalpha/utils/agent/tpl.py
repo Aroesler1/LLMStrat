@@ -20,7 +20,7 @@ PROJ_PATH = DIRNAME.parent.parent
 # class T(SingletonBaseClass): TODO: singleton does not support args now.
 class RDAT:
     """
-    QuantaAlpha Template
+    LLMStrat Template
     Use the simplest way to (C)reate a Template and (r)ender it!!
     """
 

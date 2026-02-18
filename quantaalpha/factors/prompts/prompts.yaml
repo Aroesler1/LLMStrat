@@ -360,6 +360,8 @@ hypothesis2experiment:
         - Prefer linear combinations over multiplicative chains
         - Use fewer function calls and simpler operations
         - **Target expression length: 50-150 characters for optimal generalization.**
+        - **Hard syntax safety rule:** Use at most ONE conditional ternary operator `? :` per expression.
+        - Prefer `MAX/MIN` clipping and smooth transforms over deeply nested condition chains.
       - **If previous factors were flagged for complexity, you MUST generate MUCH simpler alternatives in the next iteration.**
 
     3.**Key Considerations in Factor Construction:**
@@ -478,4 +480,3 @@ expression_duplication: |-
     - **Action Required**: Reduce the number of distinct base features used. Focus on 2-4 core features instead of using all available features.
     - Target: Use at most {{ base_features_threshold }} distinct base features. Reusing the same feature multiple times is acceptable.
   {% endif %}
-

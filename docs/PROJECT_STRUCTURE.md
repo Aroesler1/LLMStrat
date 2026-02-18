@@ -1,7 +1,7 @@
 # Project Structure
 
 ```
-QuantaAlpha/
+LLMStrat/
 ├── configs/                     # Centralized configuration
 │   ├── .env.example             #   Environment template
 │   ├── experiment.yaml          #   Main experiment parameters

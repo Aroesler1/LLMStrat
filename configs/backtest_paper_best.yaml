@@ -1,0 +1,178 @@
+######################################################################
+# Paper-best reproduction backtest config (independent OOS validation)
+# - Matches paper-era data split and portfolio settings
+# - Uses TopkDropout (50/5) and paper-style LightGBM hyperparameters
+######################################################################
+
+random_seed: 42
+
+experiment:
+  name: "paper_best_reproduction"
+  recorder: "paper_best_reproduction"
+  output_dir: "data/results/paper_best_reproduction"
+  output_metrics_file: "backtest_metrics.json"
+
+factor_source:
+  # For paper-best reproduction, run with --factor-source custom/combined
+  # and pass --factor-json data/factorlib/all_factors_library_<suffix>.json
+  type: "combined"
+  custom:
+    json_files: []
+    quality_filter: null
+    max_factors: null
+    use_llm_for_incompatible: true
+  combined:
+    official_source: "alpha158_20"
+    include_custom: true
+
+data:
+  provider_uri: "data/qlib/cn_data"
+  region: "cn"
+  market: "csi300"
+  start_time: "2016-01-01"
+  end_time: "2025-12-26"
+  extra_fields: []
+  external_feature_files: []
+
+dataset:
+  label: "Ref($close, -2) / Ref($close, -1) - 1"
+  learn_processors:
+    - class: "Fillna"
+      kwargs:
+        fields_group: "feature"
+    - class: "ProcessInf"
+    - class: "DropnaLabel"
+    - class: "CSRankNorm"
+      kwargs:
+        fields_group: "feature"
+    - class: "CSRankNorm"
+      kwargs:
+        fields_group: "label"
+  infer_processors:
+    - class: "Fillna"
+      kwargs:
+        fields_group: "feature"
+    - class: "ProcessInf"
+    - class: "CSRankNorm"
+      kwargs:
+        fields_group: "feature"
+    - class: "CSRankNorm"
+      kwargs:
+        fields_group: "label"
+  segments:
+    train: ["2016-01-01", "2020-12-31"]
+    valid: ["2021-01-01", "2021-12-31"]
+    test: ["2022-01-01", "2025-12-26"]
+
+model:
+  type: "lgb"
+  params:
+    objective: "regression"
+    learning_rate: 0.05
+    max_depth: 8
+    num_leaves: 210
+    colsample_bytree: 0.8879
+    subsample: 0.8789
+    lambda_l1: 205.6999
+    lambda_l2: 580.9768
+    num_threads: 20
+    seed: 42
+    num_boost_round: 500
+    early_stopping_round: 50
+    verbosity: -1
+
+backtest:
+  mode: "qlib"
+  strategy:
+    class: "TopkDropoutStrategy"
+    module_path: "qlib.contrib.strategy"
+    kwargs:
+      signal: "<PRED>"
+      topk: 50
+      n_drop: 5
+  backtest:
+    start_time: "2022-01-01"
+    end_time: "2025-12-26"
+    account: 100000000
+    benchmark: "SH000300"
+    exchange_kwargs:
+      limit_threshold: 0.095
+      deal_price: "open"
+      open_cost: 0.0005
+      close_cost: 0.0015
+      min_cost: 5
+  enhanced:
+    enabled: false
+    optimizer: "equal"
+    topk: 50
+    rebalance_frequency: 1
+    covariance_lookback: 60
+    signal_power: 1.0
+    transaction_cost_bps: 10
+    max_weight: 0.08
+    min_weight: 0.0
+    shrinkage: 0.3
+    ridge: 0.0001
+    kelly_fraction: 0.3
+    regime:
+      enabled: false
+      lookback: 63
+      high_vol_quantile: 0.7
+      trend_window: 20
+      reversal_window: 5
+      momentum_window: 20
+      volatile_reversal_blend: 0.35
+      calm_momentum_blend: 0.15
+      volatile_signal_scale: 0.6
+      calm_signal_scale: 1.0
+    risk_neutralization:
+      enabled: false
+      exposure_file: null
+      exposure_columns: null
+
+llm:
+  enabled: false
+  timeout: 300
+  max_retries: 3
+  cache_results: true
+  cache_dir: "data/results/factor_cache"
+  auto_extract_cache: false
+  debug: false
+
+factor_calculation:
+  output_dir: "data/results/computed_factors"
+  save_intermediate: true
+  n_jobs: 4
+  data_file: null
+
+factor_postprocess:
+  enabled: false
+  correlation_threshold: 0.7
+  orthogonalization: "none"
+  pca_explained_variance: 0.95
+  rolling_ic_window: 63
+  min_abs_rolling_ic: 0.005
+  min_ic_observations: 40
+  max_factors: null
+
+walk_forward:
+  enabled: false
+  train_months: 36
+  test_months: 3
+  step_months: 3
+  expanding_window: false
+  retrain_model: true
+
+cost_model:
+  spread_bps: 5.0
+  slippage_bps: 5.0
+  commission_per_share: 0.0
+  min_trade_cost: 0.0
+  adv_impact_coefficient: 0.1
+
+universe:
+  symbols: []
+  symbols_file: null
+  min_avg_dollar_volume: null
+  min_price: null
+  max_price: null

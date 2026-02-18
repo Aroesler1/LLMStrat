@@ -1,7 +1,7 @@
 #!/bin/bash
 
 
-echo "🚀 启动 QuantaAlpha AI V2..."
+echo "🚀 启动 LLMStrat AI V2..."
 echo ""
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

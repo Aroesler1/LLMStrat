@@ -16,6 +16,7 @@ from .trajectory import StrategyTrajectory, TrajectoryPool, RoundPhase
 from .mutation import MutationOperator
 from .crossover import CrossoverOperator
 from .controller import EvolutionController, EvolutionConfig
+from .scoring import score_trajectory
 
 __all__ = [
     "StrategyTrajectory",
@@ -25,5 +26,5 @@ __all__ = [
     "CrossoverOperator",
     "EvolutionController",
     "EvolutionConfig",
+    "score_trajectory",
 ]
-

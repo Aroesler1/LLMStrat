@@ -102,10 +102,19 @@ class QlibFactorRunner(CachedRunner[QlibFactorExperiment]):
                 for ws in exp.sub_workspace_list:
                     if not (ws.workspace_path / "result.h5").exists():
                         try:
+                            factor_file = ws.workspace_path / "factor.py"
+                            if not factor_file.exists():
+                                logger.info(f"Skip manual execution (missing factor.py): {ws.workspace_path}")
+                                continue
+
+                            project_root = Path(__file__).resolve().parents[2]
+
                             # Ensure symlink exists
-                            data_source = Path(FACTOR_COSTEER_SETTINGS.data_folder).absolute()
+                            data_source = Path(FACTOR_COSTEER_SETTINGS.data_folder)
                             if not data_source.is_absolute():
-                                data_source = Path(__file__).parent.parent.parent.parent.parent / FACTOR_COSTEER_SETTINGS.data_folder
+                                data_source = (project_root / data_source).resolve()
+                            else:
+                                data_source = data_source.resolve()
                             daily_pv_link = ws.workspace_path / "daily_pv.h5"
                             if not daily_pv_link.exists() and (data_source / "daily_pv.h5").exists():
                                 os.symlink(str(data_source / "daily_pv.h5"), str(daily_pv_link))
@@ -113,10 +122,9 @@ class QlibFactorRunner(CachedRunner[QlibFactorExperiment]):
                             # Execute factor
                             import subprocess
                             env = os.environ.copy()
-                            project_root = Path(__file__).parent.parent.parent.parent.parent
                             env['PYTHONPATH'] = str(project_root) + os.pathsep + env.get('PYTHONPATH', '')
                             subprocess.check_output(
-                                [sys.executable, str(ws.workspace_path / 'factor.py')],
+                                [sys.executable, str(factor_file)],
                                 cwd=str(ws.workspace_path),
                                 stderr=subprocess.STDOUT,
                                 env=env,
@@ -169,9 +177,14 @@ class QlibFactorRunner(CachedRunner[QlibFactorExperiment]):
         exp.experiment_workspace.before_execute()
         
         # execute() returns (result_df, execute_qlib_log) or (None, execute_qlib_log)
+        run_env = {}
+        timeout_shim_dir = Path(__file__).resolve().parents[2] / "scripts" / "bin"
+        if timeout_shim_dir.exists():
+            run_env["PATH"] = f"{timeout_shim_dir}:{os.environ.get('PATH', '')}"
+
         result_tuple = exp.experiment_workspace.execute(
             qlib_config_name=config_name,
-            run_env={}
+            run_env=run_env
         )
         
         # Unpack tuple; take first element (DataFrame)

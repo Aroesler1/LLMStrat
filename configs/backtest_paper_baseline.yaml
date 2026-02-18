@@ -1,0 +1,243 @@
+######################################################################
+# Backtest tool V2 configuration
+# Supports Qlib official factor sets (alpha158/alpha360) and custom factor JSON
+#
+# Usage:
+#   python backtest_v2/run_backtest.py -c backtest_v2/config.yaml --factor-source alpha158
+#   python backtest_v2/run_backtest.py -c backtest_v2/config.yaml --factor-source custom --factor-json /path/to/factors.json
+######################################################################
+
+# Global random seed (for reproducibility)
+random_seed: 42
+
+experiment:
+  name: "paper_baseline_alpha15820"
+  recorder: "paper_baseline_alpha15820"
+  output_dir: "data/results/paper_baseline"
+  output_metrics_file: "backtest_metrics.json"
+
+######################################################################
+# 1. Factor source (factor_source)
+######################################################################
+
+factor_source:
+  # type: alpha158 | alpha158_20 | alpha360 | custom | combined
+  type: "alpha158_20"
+
+  # Custom factor library (when type is "custom" or "combined")
+  custom:
+    json_files: []
+    # quality_filter: high_quality | medium_quality | low_quality | null
+    quality_filter: null
+    max_factors: null
+    use_llm_for_incompatible: true
+
+  combined:
+    official_source: "alpha158_20"
+    include_custom: true
+
+######################################################################
+# 2. Data and market (data)
+######################################################################
+
+data:
+  provider_uri: "data/qlib/cn_data"
+  region: "cn"
+  market: "csi300"
+  start_time: "2016-01-01"
+  end_time: "2025-12-26"
+  # Optional modality expansion for factor computation:
+  # extra_fields: ['$turn', '$amount', '$pe_ttm', '$pb']
+  # external_feature_files: ['data/features/news_sentiment_daily.csv']
+  extra_fields: []
+  external_feature_files: []
+
+######################################################################
+# 3. Dataset and preprocessing (dataset)
+######################################################################
+
+dataset:
+  label: "Ref($close, -2) / Ref($close, -1) - 1"
+
+  learn_processors:
+    - class: "Fillna"
+      kwargs:
+        fields_group: "feature"
+    - class: "ProcessInf"
+    - class: "DropnaLabel"
+    - class: "CSRankNorm"
+      kwargs:
+        fields_group: "feature"
+    - class: "CSRankNorm"
+      kwargs:
+        fields_group: "label"
+
+  infer_processors:
+    - class: "Fillna"
+      kwargs:
+        fields_group: "feature"
+    - class: "ProcessInf"
+    - class: "CSRankNorm"
+      kwargs:
+        fields_group: "feature"
+    - class: "CSRankNorm"
+      kwargs:
+        fields_group: "label"
+
+  segments:
+    train: ["2016-01-01", "2020-12-31"]
+    valid: ["2021-01-01", "2021-12-31"]
+    test:  ["2022-01-01", "2025-12-26"]
+
+######################################################################
+# 4. Model (model)
+######################################################################
+
+model:
+  type: "lgb"
+  params:
+    objective: "regression"
+    learning_rate: 0.05
+    max_depth: 7
+    num_leaves: 63
+    colsample_bytree: 0.8
+    subsample: 0.8
+    lambda_l1: 0.0
+    lambda_l2: 1.0
+    num_threads: 8
+    seed: 42
+    num_boost_round: 300
+    min_child_samples: 20
+    verbosity: -1
+
+######################################################################
+# 5. Backtest and portfolio (backtest)
+######################################################################
+
+backtest:
+  # mode: qlib (TopkDropout) | enhanced (custom non-HFT optimizer)
+  mode: "qlib"
+
+  strategy:
+    class: "TopkDropoutStrategy"
+    module_path: "qlib.contrib.strategy"
+    kwargs:
+      signal: "<PRED>"
+      topk: 50
+      n_drop: 5
+
+  backtest:
+    start_time: "2022-01-01"
+    end_time: "2025-12-26"
+    account: 100000000
+    benchmark: "SH000300"
+    exchange_kwargs:
+      limit_threshold: 0.095
+      deal_price: "open"
+      open_cost: 0.0005
+      close_cost: 0.0015
+      min_cost: 5
+
+  # Used only when mode = "enhanced"
+  enhanced:
+    enabled: true
+    optimizer: "mvo"  # equal | mvo | risk_parity | kelly
+    topk: 50
+    rebalance_frequency: 5
+    covariance_lookback: 60
+    signal_power: 1.0
+    transaction_cost_bps: 10
+    max_weight: 0.08
+    min_weight: 0.0
+    shrinkage: 0.3
+    ridge: 0.0001
+    kelly_fraction: 0.3
+
+    regime:
+      enabled: true
+      lookback: 63
+      high_vol_quantile: 0.7
+      trend_window: 20
+      reversal_window: 5
+      momentum_window: 20
+      volatile_reversal_blend: 0.35
+      calm_momentum_blend: 0.15
+      volatile_signal_scale: 0.6
+      calm_signal_scale: 1.0
+
+    risk_neutralization:
+      enabled: false
+      exposure_file: null
+      exposure_columns: null
+
+######################################################################
+# 6. LLM (for custom factor computation)
+######################################################################
+
+llm:
+  enabled: false
+  timeout: 300
+  max_retries: 3
+  cache_results: true
+  cache_dir: "data/results/factor_cache"
+  # Auto-extract cache from main program logs; set false to avoid scanning many experiment dirs
+  auto_extract_cache: false
+  debug: false
+
+######################################################################
+# 7. Factor calculation
+######################################################################
+
+factor_calculation:
+  output_dir: "data/results/computed_factors"
+  save_intermediate: true
+  n_jobs: 4
+  data_file: null  # When null, data is fetched from qlib
+
+######################################################################
+# 8. Factor post-process (orthogonalization + decay pruning)
+######################################################################
+
+factor_postprocess:
+  enabled: false
+  correlation_threshold: 0.5
+  orthogonalization: "none"  # none | residual | pca
+  pca_explained_variance: 0.95
+  rolling_ic_window: 63
+  min_abs_rolling_ic: 0.005
+  min_ic_observations: 40
+  max_factors: null
+
+######################################################################
+# 9. Walk-forward validation
+######################################################################
+
+walk_forward:
+  enabled: false
+  train_months: 36
+  test_months: 3
+  step_months: 3
+  expanding_window: false
+  retrain_model: true
+
+######################################################################
+# 10. Cost model (used by enhanced/walk-forward)
+######################################################################
+
+cost_model:
+  spread_bps: 5.0
+  slippage_bps: 5.0
+  commission_per_share: 0.0
+  min_trade_cost: 0.0
+  adv_impact_coefficient: 0.1
+
+######################################################################
+# 11. Universe filters (optional)
+######################################################################
+
+universe:
+  symbols: []
+  symbols_file: null
+  min_avg_dollar_volume: null
+  min_price: null
+  max_price: null

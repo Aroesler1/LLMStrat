@@ -46,6 +46,18 @@ class CrossoverOperator:
         """
         self.prompt_path = prompt_path or DEFAULT_PROMPT_PATH
         self.prompts = self._load_prompts()
+
+    @staticmethod
+    def _selection_metric(traj: StrategyTrajectory) -> float:
+        """Selection metric: multi-objective score (if present) else RankIC."""
+        extra = getattr(traj, "extra_info", {}) or {}
+        if "multi_objective_score" in extra:
+            try:
+                return float(extra["multi_objective_score"])
+            except Exception:
+                pass
+        base = traj.get_primary_metric()
+        return float(base) if base is not None else 0.0
     
     def _load_prompts(self) -> dict[str, str]:
         """Load prompts from YAML file."""
@@ -258,9 +270,10 @@ class CrossoverOperator:
         
         parent_summaries = []
         for i, p in enumerate(parents):
+            key_metric = self._selection_metric(p)
             summary = f"""**Parent {i+1}** (Direction {p.direction_id}, {p.phase.value}):
 - Hypothesis: {p.hypothesis[:200] if p.hypothesis else 'N/A'}...
-- Key Metric: RankIC={p.backtest_metrics.get('RankIC', 'N/A')}"""
+- Key Metric: score={key_metric:.4f}"""
             parent_summaries.append(summary)
         
         # Use template from prompts if available
@@ -356,7 +369,7 @@ Please propose your fusion hypothesis based on the above crossover guidance.
                 directions = len(set(t.direction_id for t in combo))
                 phases = len(set(t.phase for t in combo))
                 # Also consider performance
-                avg_metric = sum(t.get_primary_metric() or 0 for t in combo) / len(combo)
+                avg_metric = sum(self._selection_metric(t) for t in combo) / len(combo)
                 score = directions * 2 + phases + avg_metric
                 scored.append((list(combo), score))
             
@@ -399,7 +412,7 @@ Please propose your fusion hypothesis based on the above crossover guidance.
         # Sort by primary metric (descending)
         sorted_candidates = sorted(
             candidates, 
-            key=lambda t: t.get_primary_metric() or 0, 
+            key=lambda t: self._selection_metric(t), 
             reverse=True
         )
         
@@ -464,7 +477,7 @@ Please propose your fusion hypothesis based on the above crossover guidance.
             return sorted_candidates
         
         # Calculate weights
-        metrics = [t.get_primary_metric() or 0 for t in sorted_candidates]
+        metrics = [self._selection_metric(t) for t in sorted_candidates]
         
         # Normalize metrics to [0, 1] range
         min_m = min(metrics) if metrics else 0

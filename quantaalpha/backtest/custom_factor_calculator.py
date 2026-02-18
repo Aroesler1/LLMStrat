@@ -576,19 +576,86 @@ def get_qlib_stock_data(config: Dict) -> pd.DataFrame:
     
     stock_list = D.instruments(market)
     
-    fields = ['$open', '$high', '$low', '$close', '$volume', '$vwap']
-    df = D.features(
-        stock_list,
-        fields,
-        start_time=start_time,
-        end_time=end_time,
-        freq='day'
-    )
-    
-    df.columns = fields
-    
-    logger.debug(f"Loaded stock data: {len(df)} rows")
-    
+    default_fields = ['$open', '$high', '$low', '$close', '$volume', '$vwap']
+    base_fields = data_config.get('base_fields', default_fields)
+    extra_fields = data_config.get('extra_fields', []) or []
+    fields = []
+    for f in [*base_fields, *extra_fields]:
+        if f and f not in fields:
+            fields.append(f)
+
+    # Try full fetch first; if unsupported fields exist, fall back to incremental fetch.
+    try:
+        df = D.features(
+            stock_list,
+            fields,
+            start_time=start_time,
+            end_time=end_time,
+            freq='day'
+        )
+        df.columns = fields
+    except Exception as e:
+        logger.warning(f"Bulk field fetch failed, retrying field-by-field: {e}")
+        df = D.features(
+            stock_list,
+            default_fields,
+            start_time=start_time,
+            end_time=end_time,
+            freq='day'
+        )
+        df.columns = default_fields
+
+        for field in extra_fields:
+            try:
+                one = D.features(
+                    stock_list,
+                    [field],
+                    start_time=start_time,
+                    end_time=end_time,
+                    freq='day'
+                )
+                one.columns = [field]
+                df = df.join(one, how='left')
+                logger.info(f"Loaded extra field: {field}")
+            except Exception as ex:
+                logger.warning(f"Skip unavailable extra field {field}: {ex}")
+
+    # Optional: merge external modalities from csv/parquet files.
+    external_files = data_config.get('external_feature_files', []) or []
+    for p in external_files:
+        try:
+            path = Path(p).expanduser()
+            if not path.exists():
+                logger.warning(f"External feature file not found: {path}")
+                continue
+
+            if path.suffix.lower() in ('.parquet', '.pq'):
+                ext = pd.read_parquet(path)
+            else:
+                ext = pd.read_csv(path)
+
+            if not {'datetime', 'instrument'}.issubset(ext.columns):
+                logger.warning(f"External file missing required columns datetime/instrument: {path}")
+                continue
+
+            feature_cols = [c for c in ext.columns if c not in ('datetime', 'instrument')]
+            if not feature_cols:
+                logger.warning(f"No feature columns found in external file: {path}")
+                continue
+
+            rename_map = {c: c if c.startswith('$') else f'${c}' for c in feature_cols}
+            ext = ext.rename(columns=rename_map)
+            ext['datetime'] = pd.to_datetime(ext['datetime'])
+            ext['instrument'] = ext['instrument'].astype(str)
+            ext = ext.set_index(['instrument', 'datetime']).sort_index()
+            ext = ext[list(rename_map.values())]
+
+            df = df.join(ext, how='left')
+            logger.info(f"Merged external features from {path}: {len(rename_map)} columns")
+        except Exception as e:
+            logger.warning(f"Failed to merge external feature file {p}: {e}")
+
+    logger.debug(f"Loaded stock data: {len(df)} rows, columns={len(df.columns)}")
     return df
 
 

@@ -1,5 +1,5 @@
 """
-QuantaAlpha LLM configuration.
+LLMStrat LLM configuration.
 
 All LLM-related settings; loaded from env via Pydantic-settings (e.g. CHAT_MODEL).
 """
@@ -13,8 +13,12 @@ from quantaalpha.core.conf import ExtendedBaseSettings
 
 class LLMSettings(ExtendedBaseSettings):
     log_llm_chat_content: bool = True
-    max_retry: int = 30
+    max_retry: int = 3
     retry_wait_seconds: int = 15
+    # Hard budget guards to prevent runaway spend loops in a single process.
+    llm_max_requests_per_run: int = 120
+    llm_max_total_tokens_per_run: int = 120000
+    llm_max_empty_responses_per_run: int = 2
     dump_chat_cache: bool = False
     use_chat_cache: bool = False
     dump_embedding_cache: bool = False
@@ -30,6 +34,8 @@ class LLMSettings(ExtendedBaseSettings):
     chat_openai_api_key: str = ""
     chat_model: str = "gpt-4-turbo"
     reasoning_model: str = ""
+    # OpenAI GPT-5 reasoning effort control (none|low|medium|high|xhigh), optional
+    reasoning_effort: str = ""
     chat_max_tokens: int = 3000
     chat_temperature: float = 0.5
     chat_stream: bool = True
@@ -42,7 +48,7 @@ class LLMSettings(ExtendedBaseSettings):
 
     # Embedding
     embedding_openai_api_key: str = ""
-    embedding_model: str = ""
+    embedding_model: str = "text-embedding-3-small"
     embedding_max_str_num: int = 3
     embedding_batch_wait_seconds: float = 2.0
     embedding_api_key: str = ""

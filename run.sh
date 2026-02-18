@@ -1,5 +1,5 @@
 #!/bin/bash
-# QuantaAlpha main experiment runner
+# LLMStrat main experiment runner
 #
 # Usage:
 #   ./run.sh "initial direction"                    # default experiment
@@ -16,13 +16,49 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
 
+# Provide a portable timeout shim for macOS (used by LocalEnv shell commands).
+if [ -d "${SCRIPT_DIR}/scripts/bin" ]; then
+    export PATH="${SCRIPT_DIR}/scripts/bin:${PATH}"
+fi
+
 # =============================================================================
 # Load .env configuration
 # =============================================================================
 if [ -f "${SCRIPT_DIR}/.env" ]; then
+    # Preserve command-line overrides so ".env" does not clobber explicit run-time caps.
+    _preserve_var() {
+        local _n="$1"
+        eval "__OVR_${_n}_SET=\${${_n}+x}"
+        eval "__OVR_${_n}_VAL=\${${_n}-}"
+    }
+    _restore_var() {
+        local _n="$1"
+        eval "local _set=\${__OVR_${_n}_SET-}"
+        if [ "${_set}" = "x" ]; then
+            eval "export ${_n}=\"\${__OVR_${_n}_VAL}\""
+        fi
+    }
+    _preserve_var MAX_RETRY
+    _preserve_var LLM_MAX_REQUESTS_PER_RUN
+    _preserve_var LLM_MAX_TOTAL_TOKENS_PER_RUN
+    _preserve_var LLM_MAX_EMPTY_RESPONSES_PER_RUN
+    _preserve_var FACTOR_GEN_MAX_ATTEMPTS
+    _preserve_var CHAT_MODEL
+    _preserve_var REASONING_MODEL
+    _preserve_var QA_REASONING_EFFORT
+
     set -a
     source "${SCRIPT_DIR}/.env"
     set +a
+
+    _restore_var MAX_RETRY
+    _restore_var LLM_MAX_REQUESTS_PER_RUN
+    _restore_var LLM_MAX_TOTAL_TOKENS_PER_RUN
+    _restore_var LLM_MAX_EMPTY_RESPONSES_PER_RUN
+    _restore_var FACTOR_GEN_MAX_ATTEMPTS
+    _restore_var CHAT_MODEL
+    _restore_var REASONING_MODEL
+    _restore_var QA_REASONING_EFFORT
 else
     echo "Error: .env file not found"
     echo "Please run: cp configs/.env.example .env"
@@ -32,11 +68,33 @@ fi
 # =============================================================================
 # Activate conda environment
 # =============================================================================
-eval "$(conda shell.bash hook)" 2>/dev/null
-conda activate "${CONDA_ENV_NAME:-quantaalpha}" 2>/dev/null
+if command -v conda >/dev/null 2>&1; then
+    eval "$(conda shell.bash hook)" 2>/dev/null || true
+    conda activate "${CONDA_ENV_NAME:-quantaalpha}" 2>/dev/null || \
+        source activate "${CONDA_ENV_NAME:-quantaalpha}" 2>/dev/null || true
+else
+    echo "Conda not found; using current Python environment."
+fi
 
-if [ $? -ne 0 ]; then
-    source activate "${CONDA_ENV_NAME:-quantaalpha}" 2>/dev/null
+# Re-apply timeout shim after env activation and ensure a timeout binary exists in conda bin.
+if [ -d "${SCRIPT_DIR}/scripts/bin" ]; then
+    export PATH="${SCRIPT_DIR}/scripts/bin:${PATH}"
+    if ! command -v timeout >/dev/null 2>&1 && [ -n "${CONDA_PREFIX:-}" ] && [ -d "${CONDA_PREFIX}/bin" ]; then
+        if [ -x "${SCRIPT_DIR}/scripts/bin/timeout" ] && [ ! -e "${CONDA_PREFIX}/bin/timeout" ]; then
+            ln -s "${SCRIPT_DIR}/scripts/bin/timeout" "${CONDA_PREFIX}/bin/timeout" 2>/dev/null || true
+        fi
+    fi
+fi
+
+# rdagent expects CONDA_DEFAULT_ENV to be set even in local/venv mode.
+if [ -z "${CONDA_DEFAULT_ENV}" ]; then
+    if [ -n "${CONDA_ENV_NAME}" ]; then
+        export CONDA_DEFAULT_ENV="${CONDA_ENV_NAME}"
+    elif [ -n "${VIRTUAL_ENV}" ]; then
+        export CONDA_DEFAULT_ENV="$(basename "${VIRTUAL_ENV}")"
+    else
+        export CONDA_DEFAULT_ENV="quantaalpha"
+    fi
 fi
 
 if ! command -v quantaalpha &> /dev/null; then
@@ -45,7 +103,21 @@ if ! command -v quantaalpha &> /dev/null; then
 fi
 
 echo "Python: $(python --version)"
-echo "QuantaAlpha: $(which quantaalpha)"
+echo "LLMStrat: $(which quantaalpha)"
+echo ""
+
+# =============================================================================
+# LLM runtime summary (for reproducibility)
+# =============================================================================
+echo "LLM base URL: ${OPENAI_BASE_URL:-<unset>}"
+echo "LLM chat model: ${CHAT_MODEL:-<unset>}"
+echo "LLM reasoning model: ${REASONING_MODEL:-<unset>}"
+echo "LLM reasoning effort: ${QA_REASONING_EFFORT:-${REASONING_EFFORT:-none}}"
+echo "LLM max retry: ${MAX_RETRY:-<default>}"
+echo "LLM request cap/run: ${LLM_MAX_REQUESTS_PER_RUN:-<default>}"
+echo "LLM token cap/run: ${LLM_MAX_TOTAL_TOKENS_PER_RUN:-<default>}"
+echo "LLM empty-response cap/run: ${LLM_MAX_EMPTY_RESPONSES_PER_RUN:-<default>}"
+echo "Max consecutive task failures: ${QA_MAX_CONSECUTIVE_TASK_FAILURES:-<default>}"
 echo ""
 
 # =============================================================================

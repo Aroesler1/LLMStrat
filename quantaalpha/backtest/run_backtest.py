@@ -8,19 +8,28 @@ Backtest entry script. Usage:
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 
 project_root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(project_root))
 
+# Some environments restrict semaphore syscalls used by joblib multiprocessing.
+# Keep backtest runtime stable by default, and allow opt-in override.
+if os.environ.get("QA_ENABLE_JOBLIB_MP", "0") != "1":
+    os.environ.setdefault("JOBLIB_MULTIPROCESSING", "0")
+
+# Avoid matplotlib cache warnings in restricted/writable environments.
+if "MPLCONFIGDIR" not in os.environ:
+    mpl_cache_dir = project_root / "data" / "results" / ".matplotlib"
+    mpl_cache_dir.mkdir(parents=True, exist_ok=True)
+    os.environ["MPLCONFIGDIR"] = str(mpl_cache_dir)
+
 from dotenv import load_dotenv
 env_file = project_root / ".env"
 if env_file.exists():
     load_dotenv(env_file)
-    print(f"Loaded env: {env_file}")
-else:
-    print(f".env not found: {env_file}, using system env")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,6 +63,8 @@ Examples:
     parser.add_argument('--dry-run', action='store_true', help='Load factors only, no backtest')
     parser.add_argument('--skip-uncached', action='store_true',
                         help='Skip uncached factors; use only cached factors for backtest')
+    parser.add_argument('--walk-forward', action='store_true',
+                        help='Enable walk-forward mode (overrides config walk_forward.enabled=true)')
     
     args = parser.parse_args()
     
@@ -72,6 +83,9 @@ Examples:
         from quantaalpha.backtest.runner import BacktestRunner
         
         runner = BacktestRunner(str(config_path))
+        if args.walk_forward:
+            runner.config.setdefault("walk_forward", {})
+            runner.config["walk_forward"]["enabled"] = True
         
         if args.dry_run:
             print("\nDry Run - load factors only\n")
@@ -116,4 +130,3 @@ Examples:
 
 if __name__ == '__main__':
     main()
-

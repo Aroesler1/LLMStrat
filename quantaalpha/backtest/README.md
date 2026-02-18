@@ -117,6 +117,8 @@ model:
 ### 回测配置
 ```yaml
 backtest:
+  mode: "qlib"  # qlib (TopkDropout) | enhanced (MVO/风险平价/Kelly)
+
   strategy:
     class: "TopkDropoutStrategy"
     kwargs:
@@ -129,6 +131,8 @@ backtest:
     account: 100000000
     benchmark: "SH000905"
 ```
+
+当 `mode: "enhanced"` 时，可使用 `backtest.enhanced` 配置非高频组合构建（`equal/mvo/risk_parity/kelly`）、再平衡频率、交易成本、regime 适配等参数。
 
 ## 自定义因子 JSON 格式
 
@@ -282,4 +286,3 @@ factor_source:
 ## 许可证
 
 MIT License
-

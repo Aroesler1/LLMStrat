@@ -1,6 +1,6 @@
 ---
 name: "\U0001F31FFeature Request"
-about: Request for a new QuantaAlpha feature
+about: Request for a new LLMStrat feature
 labels: enhancement
 
 ---

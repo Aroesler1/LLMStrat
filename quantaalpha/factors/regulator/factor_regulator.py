@@ -1,3 +1,5 @@
+import os
+
 import pandas as pd
 import numpy as np
 from typing import Tuple, List, Dict, Any, Optional
@@ -6,7 +8,7 @@ from quantaalpha.log import logger
 from quantaalpha.core.scenario import Scenario
 from quantaalpha.factors.coder.factor_ast import (
     match_alphazoo, count_free_args, count_unique_vars, count_all_nodes,
-    calculate_symbol_length, count_base_features
+    calculate_symbol_length, count_base_features, parse_expression as parse_ast_expression
 )
 from quantaalpha.factors.coder.expr_parser import parse_expression
 
@@ -40,6 +42,42 @@ class FactorRegulator(Evaluator):
         self.new_factors = []
         
     
+    def sanitize_expression(self, expression: str) -> str:
+        """Light-weight expression sanitization before parsing/evaluation."""
+        if not isinstance(expression, str):
+            return ""
+        expr = " ".join(expression.strip().split())
+        if not expr:
+            return expr
+
+        # Attempt tiny auto-repair for small parenthesis imbalance.
+        lcnt = expr.count("(")
+        rcnt = expr.count(")")
+        if lcnt > rcnt and (lcnt - rcnt) <= 4:
+            expr = expr + (")" * (lcnt - rcnt))
+        elif rcnt > lcnt and (rcnt - lcnt) <= 4:
+            # Drop only trailing unmatched right parentheses.
+            for _ in range(rcnt - lcnt):
+                if expr.endswith(")"):
+                    expr = expr[:-1]
+                else:
+                    break
+        return expr
+
+    def _is_too_complex_to_parse(self, expression: str) -> tuple[bool, str]:
+        max_parse_len = int(os.environ.get("QA_MAX_EXPR_PARSE_LEN", str(max(600, self.symbol_length_threshold * 2))))
+        max_ternary = int(os.environ.get("QA_MAX_EXPR_TERNARY_COUNT", "4"))
+        if len(expression) > max_parse_len:
+            return True, f"expression too long for parser guard ({len(expression)} > {max_parse_len})"
+        if expression.count("?") > max_ternary:
+            return True, f"ternary depth too high ({expression.count('?')} > {max_ternary})"
+        return False, ""
+
+    def _expr_preview(self, expression: str, limit: int = 180) -> str:
+        if len(expression) <= limit:
+            return expression
+        return expression[:limit] + "..."
+
         
     def is_parsable(self, expression: str) -> bool:
         """
@@ -51,12 +89,34 @@ class FactorRegulator(Evaluator):
         Returns:
             bool: True if the expression can be parsed, False otherwise.
         """
+        expression = self.sanitize_expression(expression)
+        if not expression:
+            logger.warning("Failed to parse expression: empty expression")
+            return False
+
+        too_complex, reason = self._is_too_complex_to_parse(expression)
+        if too_complex:
+            logger.warning(f"Skip unparsable expression ({reason}): {self._expr_preview(expression)}")
+            return False
+
         try:
+            # Primary parser used by code-generation pipeline.
             parse_expression(expression)
             return True
-        except Exception as e:
-            logger.error(f"Failed to parse expression: {expression}. Error: {str(e)}")
+        except RecursionError as e:
+            logger.warning(f"Failed to parse expression (recursion): {self._expr_preview(expression)}. Error: {str(e)}")
             return False
+        except Exception as e:
+            # Fallback parser: AST parser is often more robust on nested expressions.
+            try:
+                parse_ast_expression(expression)
+                return True
+            except Exception as e2:
+                logger.warning(
+                    f"Failed to parse expression: {self._expr_preview(expression)}. "
+                    f"Error: {str(e)} | fallback: {str(e2)}"
+                )
+                return False
         
     def evaluate(self, expression: str) -> Tuple[int, str, Optional[str]]:
         """
@@ -71,6 +131,7 @@ class FactorRegulator(Evaluator):
                 - duplicated_subtree (str): The duplicated subtree expression
                 - matched_alpha (str or None): Name of the matched alpha if available
         """
+        expression = self.sanitize_expression(expression)
         try:
             # Check for duplication
             duplicated_subtree_size, duplicated_subtree, matched_alpha = match_alphazoo(
@@ -108,7 +169,7 @@ class FactorRegulator(Evaluator):
             return True, eval_dict
             
         except Exception as e:
-            logger.error(f"Failed to evaluate expression: {expression}. Error: {str(e)}")
+            logger.warning(f"Failed to evaluate expression: {self._expr_preview(expression)}. Error: {str(e)}")
             return False, None
     
     

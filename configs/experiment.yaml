@@ -1,5 +1,5 @@
 # ============================================================
-# QuantaAlpha run configuration
+# LLMStrat run configuration
 # All experiment parameters are consolidated here
 # ============================================================
 
@@ -90,6 +90,18 @@ evolution:
 
   # Top percent threshold (only when parent_selection_strategy = "top_percent_plus_random")
   top_percent_threshold: 0.3
+
+  # Multi-objective trajectory scoring for evolution selection/ranking
+  # When enabled, parent selection and top trajectory ranking no longer rely on RankIC alone.
+  multi_objective:
+    enabled: false
+    weights:
+      rank_ic: 1.0
+      ic: 0.5
+      annualized_return: 0.5
+      information_ratio: 0.5
+      max_drawdown_penalty: 0.75
+      complexity_penalty: 0.05
 
   # Fresh start: true=each experiment starts with empty trajectory pool; false=load existing if available
   fresh_start: true

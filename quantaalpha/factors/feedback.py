@@ -179,13 +179,13 @@ class QlibFactorHypothesisExperiment2Feedback(HypothesisExperiment2Feedback):
                 break
             except json.JSONDecodeError as e:
                 last_error = e
-                logger.warning(f"[QuantaAlpha] JSON parse failed (attempt {attempt + 1}/{MAX_JSON_PARSE_RETRIES}): {e}")
+                logger.warning(f"[LLMStrat] JSON parse failed (attempt {attempt + 1}/{MAX_JSON_PARSE_RETRIES}): {e}")
                 if attempt < MAX_JSON_PARSE_RETRIES - 1:
-                    logger.info("[QuantaAlpha] Re-requesting LLM...")
+                    logger.info("[LLMStrat] Re-requesting LLM...")
                 continue
         
         if response_json is None:
-            logger.error(f"[QuantaAlpha] JSON parse still failed after {MAX_JSON_PARSE_RETRIES} attempts")
+            logger.error(f"[LLMStrat] JSON parse still failed after {MAX_JSON_PARSE_RETRIES} attempts")
             return HypothesisFeedback(
                 observations="JSON parse failed; could not extract feedback",
                 hypothesis_evaluation="Unable to evaluate",

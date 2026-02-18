@@ -13,7 +13,7 @@ from typing import Any, Generic, TypeVar
 from quantaalpha.core.conf import RD_AGENT_SETTINGS
 
 """
-This file contains the classes about organizing tasks in QuantaAlpha.
+This file contains the classes about organizing tasks in LLMStrat.
 """
 
 
@@ -123,10 +123,12 @@ class FBWorkspace(Workspace):
             workspace_data_file_path = workspace_path / data_file_path.name
             if workspace_data_file_path.exists():
                 workspace_data_file_path.unlink()
-            if platform.system() == "Linux":
+            if platform.system() in {"Linux", "Darwin"}:
                 os.symlink(data_file_path, workspace_data_file_path)
-            if platform.system() == "Windows":
+            elif platform.system() == "Windows":
                 os.link(data_file_path, workspace_data_file_path)
+            else:
+                shutil.copy2(data_file_path, workspace_data_file_path)
 
     def inject_code(self, **files: str) -> None:
         """

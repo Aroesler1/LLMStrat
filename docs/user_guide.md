@@ -1,4 +1,4 @@
-# 📘 QuantaAlpha User Guide
+# 📘 LLMStrat User Guide
 
 This comprehensive guide covers everything beyond the basics — from project architecture to advanced experiment tuning. For installation, environment setup, and first-run instructions, please refer to the main [README](../README.md).
 
@@ -16,7 +16,7 @@ This comprehensive guide covers everything beyond the basics — from project ar
 ## 🏗️ Project Structure
 
 ```
-QuantaAlpha/
+LLMStrat/
 ├── configs/                     # Centralized configuration
 │   ├── .env.example             #   Environment template
 │   ├── experiment.yaml          #   Main experiment parameters
@@ -160,3 +160,36 @@ Token and time consumption scales approximately with `num_directions × max_roun
 | 2 directions × 3 rounds × 3 factors | ~100K tokens | ~30–60 min |
 | 3 directions × 5 rounds × 5 factors | ~500K tokens | ~2–4 hours |
 | 5 directions × 10 rounds × 5 factors | ~2M tokens | ~8–16 hours |
+
+---
+
+## 🧾 Paper/Live Trading Runtime
+
+LLMStrat now includes a retail-oriented trading runtime package (`quantaalpha/trading/*`) with:
+- broker abstraction (`MockBroker` + `AlpacaBroker`)
+- APScheduler-based rebalance orchestration
+- SQLite state persistence and audit logs
+- risk checks and manual stop/flatten controls
+
+### Core Commands
+
+```bash
+# one-off paper rebalance using paper profile
+quantaalpha paper --once=True
+
+# continuous scheduled paper trading (blocking process)
+quantaalpha paper --once=False
+
+# runtime status
+quantaalpha status --config_path configs/paper.yaml --paper=True
+
+# emergency stop (optional flatten)
+quantaalpha stop --config_path configs/paper.yaml --paper=True --flatten=True
+```
+
+### Config Files
+
+- `configs/trading.yaml`: general trading runtime defaults (safe mock + dry-run defaults)
+- `configs/paper.yaml`: Alpaca paper profile
+
+See `docs/paper_to_live_checklist.md` and `docs/ops_runbook.md` before enabling live capital.

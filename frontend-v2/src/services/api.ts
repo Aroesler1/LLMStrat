@@ -1,5 +1,5 @@
 /**
- * QuantaAlpha API Service
+ * LLMStrat API Service
  *
  * Centralized API client for communicating with the FastAPI backend.
  * Uses fetch (no extra dependency) with the Vite proxy (/api -> localhost:8000).
@@ -156,6 +156,36 @@ export async function getBacktestStatus(taskId: string) {
 
 export async function cancelBacktest(taskId: string) {
   return request(`/api/v1/backtest/${taskId}`, { method: 'DELETE' });
+}
+
+// ========================== Trading API ==========================
+
+export interface TradingControlParams {
+  configPath?: string;
+  paper?: boolean;
+  dryRun?: boolean;
+  flatten?: boolean;
+}
+
+export async function getTradingStatus(params: { configPath?: string; paper?: boolean } = {}) {
+  const qs = new URLSearchParams();
+  if (params.configPath) qs.set('configPath', params.configPath);
+  if (params.paper !== undefined) qs.set('paper', String(params.paper));
+  return request<{ status: any }>(`/api/v1/trading/status?${qs.toString()}`);
+}
+
+export async function runTradingRebalance(params: TradingControlParams = {}) {
+  return request<{ result: any }>('/api/v1/trading/rebalance', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
+}
+
+export async function stopTrading(params: TradingControlParams = {}) {
+  return request<{ status: any }>('/api/v1/trading/stop', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
 }
 
 // ========================== System Config API ==========================

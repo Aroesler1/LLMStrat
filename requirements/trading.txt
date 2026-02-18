@@ -1,0 +1,12 @@
+# Requirements for trading runtime and deployment.
+apscheduler>=3.10,<4.0
+sqlalchemy>=2.0,<3.0
+alpaca-py>=0.20
+yfinance>=0.2.40
+python-dotenv>=1.0.0
+
+# API backend for runtime monitoring endpoints
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+websockets>=12.0
+PyYAML>=6.0

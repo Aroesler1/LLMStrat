@@ -127,6 +127,9 @@ class FactorFBWorkspace(FBWorkspace):
             else:
                 return self.FB_CODE_NOT_SET, None
         with FileLock(self.workspace_path / "execution.lock"):
+            # Resolve paths from project root so generated workspaces can always find source data.
+            project_root = Path(__file__).resolve().parents[3]
+
             # Set data path for all versions
             source_data_path = (
                 Path(
@@ -138,11 +141,11 @@ class FactorFBWorkspace(FBWorkspace):
                 )
             )
 
-            # Use absolute path
+            # Use project-root-relative resolution for relative config paths.
             if not source_data_path.is_absolute():
-                source_data_path = self.workspace_path.parent.parent.parent / source_data_path
+                source_data_path = (project_root / source_data_path).resolve()
             else:
-                source_data_path = Path(source_data_path).absolute()
+                source_data_path = source_data_path.resolve()
 
             source_data_path.mkdir(exist_ok=True, parents=True)
             code_path = self.workspace_path / f"factor.py"
@@ -151,8 +154,8 @@ class FactorFBWorkspace(FBWorkspace):
             if source_data_path.exists() and any(source_data_path.iterdir()):
                 self.link_all_files_in_folder_to_workspace(source_data_path, self.workspace_path)
             else:
-                from quantaalpha.log import logger
-                logger.warning(f"Data folder {source_data_path} does not exist or is empty. Skipping linking.")
+                # Optional debug data folder is absent in normal runs; skip silently.
+                pass
 
             execution_feedback = self.FB_EXECUTION_SUCCEEDED
             execution_success = False
@@ -168,7 +171,6 @@ class FactorFBWorkspace(FBWorkspace):
                 # Set PYTHONPATH to include the project root so quantaalpha can be imported
                 import os
                 env = os.environ.copy()
-                project_root = Path(__file__).parent.parent.parent.parent.parent
                 pythonpath = str(project_root)
                 if 'PYTHONPATH' in env:
                     env['PYTHONPATH'] = pythonpath + ':' + env['PYTHONPATH']

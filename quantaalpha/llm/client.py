@@ -8,6 +8,7 @@ import random
 import re
 import sqlite3
 import ssl
+import threading
 import time
 import urllib.request
 import uuid
@@ -24,6 +25,58 @@ from quantaalpha.log import logger
 from quantaalpha.llm.config import LLM_SETTINGS
 
 DEFAULT_QLIB_DOT_PATH = Path("./")
+
+
+class EmptyLLMResponseError(RuntimeError):
+    """Raised when the model returns an empty completion."""
+
+
+_LLM_BUDGET_LOCK = threading.Lock()
+_LLM_BUDGET_STATE = {
+    "requests": 0,
+    "total_tokens": 0,
+    "empty_responses": 0,
+}
+
+
+def _reserve_llm_request() -> None:
+    cap = int(getattr(LLM_SETTINGS, "llm_max_requests_per_run", 0) or 0)
+    with _LLM_BUDGET_LOCK:
+        if cap > 0 and _LLM_BUDGET_STATE["requests"] >= cap:
+            raise RuntimeError(
+                f"LLM request budget exceeded: {_LLM_BUDGET_STATE['requests']} >= {cap}. "
+                "Increase LLM_MAX_REQUESTS_PER_RUN only if intentional."
+            )
+        _LLM_BUDGET_STATE["requests"] += 1
+
+
+def _record_llm_tokens(tokens: int | None) -> None:
+    if tokens is None:
+        return
+    try:
+        tok = int(tokens)
+    except Exception:
+        return
+    if tok <= 0:
+        return
+    cap = int(getattr(LLM_SETTINGS, "llm_max_total_tokens_per_run", 0) or 0)
+    with _LLM_BUDGET_LOCK:
+        _LLM_BUDGET_STATE["total_tokens"] += tok
+        if cap > 0 and _LLM_BUDGET_STATE["total_tokens"] > cap:
+            raise RuntimeError(
+                f"LLM token budget exceeded: {_LLM_BUDGET_STATE['total_tokens']} > {cap}. "
+                "Increase LLM_MAX_TOTAL_TOKENS_PER_RUN only if intentional."
+            )
+
+
+def _record_empty_response() -> None:
+    cap = int(getattr(LLM_SETTINGS, "llm_max_empty_responses_per_run", 0) or 0)
+    with _LLM_BUDGET_LOCK:
+        _LLM_BUDGET_STATE["empty_responses"] += 1
+        if cap > 0 and _LLM_BUDGET_STATE["empty_responses"] > cap:
+            raise EmptyLLMResponseError(
+                f"Too many empty LLM responses: {_LLM_BUDGET_STATE['empty_responses']} > {cap}"
+            )
 
 
 def md5_hash(input_string: str) -> str:
@@ -134,7 +187,10 @@ except ImportError:
 try:
     from llama import Llama
 except ImportError:
-    logger.warning("llama is not installed.")
+    Llama = None
+    # Llama backend is optional; warn only when user explicitly enables it.
+    if getattr(LLM_SETTINGS, "use_llama2", False):
+        logger.warning("llama is not installed.")
 
 
 class ConvManager:
@@ -348,6 +404,18 @@ class APIBackend:
         use_embedding_cache: bool | None = None,
         dump_embedding_cache: bool | None = None,
     ) -> None:
+        # Prefer QA_REASONING_EFFORT to avoid colliding with rdagent's REASONING_EFFORT validation.
+        self.reasoning_effort = (
+            os.environ.get("QA_REASONING_EFFORT")
+            or LLM_SETTINGS.reasoning_effort
+            or ""
+        ).strip().lower() or None
+        if self.reasoning_effort and self.reasoning_effort not in {"none", "low", "medium", "high", "xhigh"}:
+            logger.warning(
+                f"Unknown reasoning_effort='{self.reasoning_effort}'. "
+                "Expected one of: none, low, medium, high, xhigh."
+            )
+
         if LLM_SETTINGS.use_llama2:
             self.generator = Llama.build(
                 ckpt_dir=LLM_SETTINGS.llama2_ckpt_dir,
@@ -411,6 +479,8 @@ class APIBackend:
             self.embedding_api_key = (
                 embedding_api_key
                 or LLM_SETTINGS.embedding_openai_api_key
+                or LLM_SETTINGS.embedding_api_key
+                or os.environ.get("EMBEDDING_API_KEY")
                 or LLM_SETTINGS.openai_api_key
                 or os.environ.get("OPENAI_API_KEY")
             )
@@ -423,11 +493,7 @@ class APIBackend:
             self.embedding_base_url = (
                 LLM_SETTINGS.embedding_base_url
                 or os.environ.get("EMBEDDING_BASE_URL")
-            )
-
-            self.embedding_api_key = (
-                LLM_SETTINGS.embedding_api_key
-                or os.environ.get("EMBEDDING_API_KEY")
+                or self.base_url
             )
             
 
@@ -443,7 +509,11 @@ class APIBackend:
             self.chat_stream = LLM_SETTINGS.chat_stream
             self.chat_seed = LLM_SETTINGS.chat_seed
 
-            self.embedding_model = LLM_SETTINGS.embedding_model if embedding_model is None else embedding_model
+            self.embedding_model = (
+                (LLM_SETTINGS.embedding_model or os.environ.get("EMBEDDING_MODEL") or "text-embedding-3-small")
+                if embedding_model is None
+                else embedding_model
+            )
             self.embedding_api_base = (
                 LLM_SETTINGS.embedding_azure_api_base if embedding_api_base is None else embedding_api_base
             )
@@ -624,6 +694,25 @@ class APIBackend:
         TODO: This function only continues once, maybe need to continue more than once in the future.
         """
         response, finish_reason = self._create_chat_completion_inner_function(messages=messages, **kwargs)
+        if not str(response or "").strip():
+            if finish_reason == "length":
+                concise_prompt = (
+                    "Your previous response was truncated. Reply concisely and directly."
+                )
+                if kwargs.get("json_mode"):
+                    concise_prompt = (
+                        "Your previous response was truncated. "
+                        "Reply with a compact valid JSON object only."
+                    )
+                retry_messages = deepcopy(messages)
+                retry_messages.append({"role": "user", "content": concise_prompt})
+                retry_resp, _ = self._create_chat_completion_inner_function(
+                    messages=retry_messages,
+                    **kwargs,
+                )
+                if str(retry_resp or "").strip():
+                    return retry_resp
+            raise EmptyLLMResponseError("Model returned empty response")
 
         if finish_reason == "length":
             new_message = deepcopy(messages)
@@ -635,6 +724,9 @@ class APIBackend:
                 },
             )
             new_response, finish_reason = self._create_chat_completion_inner_function(messages=new_message, **kwargs)
+            if not str(new_response or "").strip():
+                logger.warning("Auto-continue returned empty response; keeping first segment only")
+                return response
             return response + new_response
         return response
 
@@ -655,6 +747,15 @@ class APIBackend:
                     return self._create_embedding_inner_function(**kwargs)
                 if chat_completion:
                     return self._create_chat_completion_auto_continue(**kwargs)
+            except EmptyLLMResponseError:
+                # Empty output is usually not recoverable via blind retries and burns budget.
+                # Do one deterministic fallback by disabling reasoning mode for this call.
+                if chat_completion and kwargs.get("reasoning_flag", True):
+                    logger.warning("Empty reasoning output; retrying once with reasoning_flag=False")
+                    fallback_kwargs = dict(kwargs)
+                    fallback_kwargs["reasoning_flag"] = False
+                    return self._create_chat_completion_auto_continue(**fallback_kwargs)
+                raise
             except openai.BadRequestError as e:  # noqa: PERF203
                 logger.warning(e)
                 logger.warning(f"Retrying {i+1}th time...")
@@ -745,6 +846,117 @@ class APIBackend:
             )
         return log_messages
 
+    @staticmethod
+    def _is_reasoning_effort_error(exc: Exception) -> bool:
+        msg = str(exc).lower()
+        return (
+            "reasoning_effort" in msg
+            or "reasoning.effort" in msg
+            or ("unknown parameter" in msg and "reasoning" in msg)
+        )
+
+    @staticmethod
+    def _is_max_tokens_error(exc: Exception) -> bool:
+        msg = str(exc).lower()
+        return (
+            ("unsupported parameter" in msg and "max_tokens" in msg)
+            or ("max_tokens" in msg and "max_completion_tokens" in msg)
+        )
+
+    @staticmethod
+    def _is_max_completion_tokens_error(exc: Exception) -> bool:
+        msg = str(exc).lower()
+        return (
+            ("unsupported parameter" in msg and "max_completion_tokens" in msg)
+            or ("unknown parameter" in msg and "max_completion_tokens" in msg)
+        )
+
+    def _chat_create_with_reasoning_fallback(self, kwargs: dict[str, Any]) -> Any:
+        """
+        Send chat completion with compatibility fallbacks.
+        Handles:
+        - reasoning_effort -> extra_body.reasoning.effort
+        - max_tokens <-> max_completion_tokens
+        """
+        primary_exc: Exception | None = None
+        try:
+            _reserve_llm_request()
+            return self.chat_client.chat.completions.create(**kwargs)
+        except Exception as exc:  # noqa: BLE001
+            primary_exc = exc
+
+        fallback_candidates: list[tuple[str, dict[str, Any]]] = []
+
+        # 1) reasoning_effort compatibility fallback
+        if (
+            primary_exc is not None
+            and kwargs.get("reasoning_effort") is not None
+            and self._is_reasoning_effort_error(primary_exc)
+        ):
+            effort = kwargs.get("reasoning_effort")
+            fallback_kwargs = dict(kwargs)
+            fallback_kwargs.pop("reasoning_effort", None)
+            extra_body = dict(fallback_kwargs.get("extra_body") or {})
+            extra_body["reasoning"] = {"effort": effort}
+            fallback_kwargs["extra_body"] = extra_body
+            fallback_candidates.append(
+                (
+                    f"extra_body.reasoning.effort (reasoning_effort={effort})",
+                    fallback_kwargs,
+                )
+            )
+
+        # 2) max_tokens compatibility fallback
+        if (
+            primary_exc is not None
+            and kwargs.get("max_tokens") is not None
+            and self._is_max_tokens_error(primary_exc)
+        ):
+            fallback_kwargs = dict(kwargs)
+            mt = fallback_kwargs.pop("max_tokens", None)
+            fallback_kwargs["max_completion_tokens"] = mt
+            fallback_candidates.append(("max_completion_tokens", fallback_kwargs))
+
+            # Combined fallback (token compatibility + reasoning compatibility)
+            if fallback_kwargs.get("reasoning_effort") is not None:
+                combined = dict(fallback_kwargs)
+                effort = combined.pop("reasoning_effort", None)
+                if effort is not None:
+                    extra_body = dict(combined.get("extra_body") or {})
+                    extra_body["reasoning"] = {"effort": effort}
+                    combined["extra_body"] = extra_body
+                    fallback_candidates.append(
+                        (
+                            f"max_completion_tokens + extra_body.reasoning.effort (reasoning_effort={effort})",
+                            combined,
+                        )
+                    )
+
+        # 3) reverse compatibility fallback for providers expecting max_tokens
+        if (
+            primary_exc is not None
+            and kwargs.get("max_completion_tokens") is not None
+            and self._is_max_completion_tokens_error(primary_exc)
+        ):
+            fallback_kwargs = dict(kwargs)
+            mct = fallback_kwargs.pop("max_completion_tokens", None)
+            fallback_kwargs["max_tokens"] = mct
+            fallback_candidates.append(("max_tokens", fallback_kwargs))
+
+        last_exc = primary_exc
+        for label, candidate_kwargs in fallback_candidates:
+            try:
+                logger.warning(f"Retrying chat completion with fallback: {label}")
+                _reserve_llm_request()
+                return self.chat_client.chat.completions.create(**candidate_kwargs)
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                continue
+
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("Failed to create chat completion")
+
     def _create_chat_completion_inner_function(  # noqa: C901, PLR0912, PLR0915
         self,
         messages: list[dict],
@@ -763,7 +975,7 @@ class APIBackend:
         seed : Optional[int]
             When retrying with cache enabled, it will keep returning the same results.
             To make retries useful, we need to enable a seed.
-            This seed is different from `self.chat_seed` for GPT. It is for the local cache mechanism enabled by QuantaAlpha locally.
+            This seed is different from `self.chat_seed` for GPT. It is for the local cache mechanism enabled by LLMStrat locally.
         """
         if seed is None and LLM_SETTINGS.use_auto_chat_cache_seed_gen:
             seed = LLM_CACHE_SEED_GEN.get_next_seed()
@@ -842,13 +1054,24 @@ class APIBackend:
             kwargs = dict(
                 model=model,
                 messages=messages,
-                max_tokens=max_tokens,
                 temperature=temperature,
                 stream=self.chat_stream,
                 seed=self.chat_seed,
                 frequency_penalty=frequency_penalty,
                 presence_penalty=presence_penalty,
             )
+
+            # GPT-5-family chat API expects max_completion_tokens.
+            if model.startswith("gpt-5"):
+                kwargs["max_completion_tokens"] = max_tokens
+            else:
+                kwargs["max_tokens"] = max_tokens
+
+            if reasoning_flag and self.reasoning_effort:
+                kwargs["reasoning_effort"] = self.reasoning_effort
+                # GPT-5 style reasoning with effort may reject custom temperature.
+                if model.startswith("gpt-5") and self.reasoning_effort != "none":
+                    kwargs.pop("temperature", None)
             
             if json_mode:
                 if add_json_in_prompt:
@@ -857,7 +1080,7 @@ class APIBackend:
                         if message["role"] == "system":
                             break
                 kwargs["response_format"] = {"type": "json_object"}
-            response = self.chat_client.chat.completions.create(**kwargs)
+            response = self._chat_create_with_reasoning_fallback(kwargs)
 
             
             if self.chat_stream:
@@ -894,10 +1117,27 @@ class APIBackend:
                         ),
                         tag="llm_messages",
                     )
+                try:
+                    _record_llm_tokens(getattr(response.usage, "total_tokens", None))
+                except Exception:
+                    # No usage info for some providers/compat layers.
+                    pass
+            if not str(resp or "").strip():
+                _record_empty_response()
+                raise EmptyLLMResponseError(
+                    f"Model returned empty response (model={model}, finish_reason={finish_reason})"
+                )
+
             if json_mode or reasoning_flag:
                 # Extract JSON part
                 json_start = resp.find('{')
-                json_end = resp.rfind('}') + 1
+                json_end = resp.rfind('}')
+                if json_start < 0 or json_end < 0 or json_end < json_start:
+                    _record_empty_response()
+                    raise EmptyLLMResponseError(
+                        f"No JSON object in response (model={model}, finish_reason={finish_reason})"
+                    )
+                json_end += 1
                 resp = resp[json_start:json_end]
                 # Try parse JSON; on failure try to fix
                 try:

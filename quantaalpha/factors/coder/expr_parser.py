@@ -253,15 +253,42 @@ def parse_entire_expression(s, loc, tokens):
     return ''.join(flatten_nested_tokens(tokens))
 
 
+def _can_split_into_valid_ops(cluster: str, valid_ops: set[str]) -> bool:
+    """Return True when an operator cluster can be tokenized into valid ops.
+
+    Example: ",-" should be accepted as "," + "-" (comma + unary minus).
+    """
+    # Greedy longest-first tokenization.
+    ops_sorted = sorted(valid_ops, key=len, reverse=True)
+    i = 0
+    while i < len(cluster):
+        matched = False
+        for op in ops_sorted:
+            if cluster.startswith(op, i):
+                i += len(op)
+                matched = True
+                break
+        if not matched:
+            return False
+    return True
+
+
 def check_for_invalid_operators(expression):
     valid_operators = {"(", ")", ",", "+", "-", "*", "/", "&&", "||", "&", "|", ">", "<", ">=", "<=", "==", "!=", "?", ":", "."}
     pattern = r'([+\-*/,><?:.]{2,})|([><=!&|^`~@#%\\;{}[\]"\'\\]+)'
     found_operators_tuples = re.findall(pattern, expression)
     found_operators = [operator for tup in found_operators_tuples for operator in tup if operator]
-    invalid_operators = set(found_operators) - valid_operators
-    
+
+    invalid_operators = []
+    for op_cluster in found_operators:
+        if op_cluster in valid_operators:
+            continue
+        if _can_split_into_valid_ops(op_cluster, valid_operators):
+            continue
+        invalid_operators.append(op_cluster)
+
     if invalid_operators:
-        raise Exception(f"Invalid operator(s): \"{''.join(invalid_operators)}\"")
+        raise Exception(f"Invalid operator(s): \"{''.join(sorted(set(invalid_operators)))}\"")
 
 
 expr <<= infixNotation(operand, 
@@ -342,12 +369,9 @@ def preprocess_unary_minus(factor_expression):
 
 
 def parse_expression(factor_expression):
+    factor_expression = preprocess_unary_minus(factor_expression)
     check_parentheses_balance(factor_expression)
     check_for_invalid_operators(factor_expression)
-    
-    factor_expression = preprocess_unary_minus(factor_expression)
-    
-    print("factor_expression: ", factor_expression)
     
     parsed_data_function = expr.parseString(factor_expression)[0]
     return parsed_data_function

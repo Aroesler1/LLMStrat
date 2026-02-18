@@ -1,4 +1,4 @@
-# QuantaAlpha Web Dashboard - 快速开始指南
+# LLMStrat Web Dashboard - 快速开始指南
 
 ## 🎯 项目概览
 
@@ -33,7 +33,7 @@
 │  └──────────────────────────────────────────────────┘  │
 │            ↕ subprocess                                  │
 │  ┌──────────────────────────────────────────────────┐  │
-│  │        QuantaAlpha 核心 (quantaalpha CLI)        │  │
+│  │        LLMStrat 核心 (quantaalpha CLI)        │  │
 │  │  - 因子挖掘 (quantaalpha mine)                   │  │
 │  │  - 独立回测 (quantaalpha.backtest.run_backtest)  │  │
 │  │  - 因子库 (all_factors_library*.json)            │  │
@@ -205,4 +205,4 @@ frontend-v2/
 
 ---
 
-Made with ❤️ by QuantaAlpha Team
+Made with ❤️ by LLMStrat Team

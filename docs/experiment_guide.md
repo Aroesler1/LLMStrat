@@ -422,7 +422,7 @@ def calculate_factor(expr: str, name: str):
 
 **缓存机制**：
 - 计算结果保存为 HDF5 格式（`result.h5`）
-- 工作空间路径：`/mnt/DATA/quantagent/QuantaAlpha/QuantaAlpha_workspace/{UUID}/`
+- 工作空间路径：`/mnt/DATA/quantagent/Aroesler1/LLMStrat_workspace/{UUID}/`
 - 独立回测框架可通过缓存提取工具复用这些计算结果
 
 #### Step 4: factor_backtest（因子回测）

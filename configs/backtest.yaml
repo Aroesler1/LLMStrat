@@ -46,6 +46,11 @@ data:
   market: "csi300"
   start_time: "2016-01-01"
   end_time: "2025-12-26"
+  # Optional modality expansion for factor computation:
+  # extra_fields: ['$turn', '$amount', '$pe_ttm', '$pb']
+  # external_feature_files: ['data/features/news_sentiment_daily.csv']
+  extra_fields: []
+  external_feature_files: []
 
 ######################################################################
 # 3. Dataset and preprocessing (dataset)
@@ -91,27 +96,28 @@ dataset:
 model:
   type: "lgb"
   params:
-    loss: "mse"
-    learning_rate: 0.1
-    max_depth: 8
-    num_leaves: 210
-    colsample_bytree: 0.8879
-    subsample: 0.8789
-    lambda_l1: 205.6999
-    lambda_l2: 580.9768
-    num_threads: 20
+    objective: "regression"
+    learning_rate: 0.05
+    max_depth: 7
+    num_leaves: 63
+    colsample_bytree: 0.8
+    subsample: 0.8
+    lambda_l1: 0.0
+    lambda_l2: 1.0
+    num_threads: 8
     seed: 42
-    random_state: 42
-    early_stopping_round: 50
-    num_boost_round: 500
-    min_child_samples: 100
-    feature_fraction_bynode: 0.8
+    num_boost_round: 300
+    min_child_samples: 20
+    verbosity: -1
 
 ######################################################################
 # 5. Backtest and portfolio (backtest)
 ######################################################################
 
 backtest:
+  # mode: qlib (TopkDropout) | enhanced (custom non-HFT optimizer)
+  mode: "qlib"
+
   strategy:
     class: "TopkDropoutStrategy"
     module_path: "qlib.contrib.strategy"
@@ -131,6 +137,38 @@ backtest:
       open_cost: 0.0005
       close_cost: 0.0015
       min_cost: 5
+
+  # Used only when mode = "enhanced"
+  enhanced:
+    enabled: true
+    optimizer: "mvo"  # equal | mvo | risk_parity | kelly
+    topk: 50
+    rebalance_frequency: 5
+    covariance_lookback: 60
+    signal_power: 1.0
+    transaction_cost_bps: 10
+    max_weight: 0.08
+    min_weight: 0.0
+    shrinkage: 0.3
+    ridge: 0.0001
+    kelly_fraction: 0.3
+
+    regime:
+      enabled: true
+      lookback: 63
+      high_vol_quantile: 0.7
+      trend_window: 20
+      reversal_window: 5
+      momentum_window: 20
+      volatile_reversal_blend: 0.35
+      calm_momentum_blend: 0.15
+      volatile_signal_scale: 0.6
+      calm_signal_scale: 1.0
+
+    risk_neutralization:
+      enabled: false
+      exposure_file: null
+      exposure_columns: null
 
 ######################################################################
 # 6. LLM (for custom factor computation)
@@ -155,3 +193,51 @@ factor_calculation:
   save_intermediate: true
   n_jobs: 4
   data_file: null  # When null, data is fetched from qlib
+
+######################################################################
+# 8. Factor post-process (orthogonalization + decay pruning)
+######################################################################
+
+factor_postprocess:
+  enabled: false
+  correlation_threshold: 0.5
+  orthogonalization: "none"  # none | residual | pca
+  pca_explained_variance: 0.95
+  rolling_ic_window: 63
+  min_abs_rolling_ic: 0.005
+  min_ic_observations: 40
+  max_factors: null
+
+######################################################################
+# 9. Walk-forward validation
+######################################################################
+
+walk_forward:
+  enabled: false
+  train_months: 36
+  test_months: 3
+  step_months: 3
+  expanding_window: false
+  retrain_model: true
+
+######################################################################
+# 10. Cost model (used by enhanced/walk-forward)
+######################################################################
+
+cost_model:
+  spread_bps: 5.0
+  slippage_bps: 5.0
+  commission_per_share: 0.0
+  min_trade_cost: 0.0
+  adv_impact_coefficient: 0.1
+
+######################################################################
+# 11. Universe filters (optional)
+######################################################################
+
+universe:
+  symbols: []
+  symbols_file: null
+  min_avg_dollar_volume: null
+  min_price: null
+  max_price: null

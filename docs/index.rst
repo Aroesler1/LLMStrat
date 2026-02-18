@@ -1,4 +1,4 @@
-   Welcome to QuantaAlpha's documentation!
+   Welcome to LLMStrat's documentation!
    =========================================
 
    .. toctree::

@@ -1,6 +1,6 @@
 """
 Compatibility layer: quantaalpha.factors.qlib_experiment_init.
-Load factor/model experiment classes from QuantaAlpha first, fallback to rdagent.
+Load factor/model experiment classes from LLMStrat first, fallback to rdagent.
 """
 
 from importlib import import_module

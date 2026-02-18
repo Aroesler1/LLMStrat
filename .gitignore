@@ -80,6 +80,7 @@ all_factors_library*.json
 # ---- Binary / large files ----
 *.pkl
 *.h5
+*.zip
 *.db
 *.ipynb
 *.pth
@@ -127,3 +128,6 @@ release-notes.md
 
 # ---- Sphinx documentation ----
 docs/_build/
+
+# ---- Local dataset cache ----
+hf_data/*.zip

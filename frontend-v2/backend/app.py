@@ -1,8 +1,8 @@
 """
-QuantaAlpha Backend API
+LLMStrat Backend API
 FastAPI-based REST + WebSocket API for factor mining and backtesting.
 
-Integrates with the core QuantaAlpha CLI to launch experiments
+Integrates with the core LLMStrat CLI to launch experiments
 and reads factor library JSON for the factor browsing API.
 """
 
@@ -35,7 +35,7 @@ DOTENV_PATH = PROJECT_ROOT / ".env"
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
-app = FastAPI(title="QuantaAlpha API", version="2.0.0")
+app = FastAPI(title="LLMStrat API", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -68,6 +68,14 @@ class BacktestStartRequest(BaseModel):
     factorJson: str = Field(..., description="Path to factor library JSON")
     factorSource: str = Field("custom", description="custom | combined")
     configPath: Optional[str] = Field(None, description="Path to backtest config")
+
+
+class TradingControlRequest(BaseModel):
+    """Request for trading control endpoints."""
+    configPath: Optional[str] = Field(None, description="Path to trading config")
+    paper: bool = Field(False, description="Use paper mode")
+    dryRun: Optional[bool] = Field(None, description="Override dry-run flag for manual rebalance")
+    flatten: bool = Field(False, description="Flatten all positions when stopping")
 
 
 class SystemConfigUpdate(BaseModel):
@@ -115,6 +123,16 @@ def _load_dotenv_dict() -> Dict[str, str]:
                 key, _, val = stripped.partition("=")
                 env[key.strip()] = val.strip()
     return env
+
+
+def _resolve_trading_config_path(config_path: Optional[str], paper: bool = True) -> str:
+    if config_path:
+        p = Path(config_path)
+        if not p.is_absolute():
+            p = PROJECT_ROOT / config_path
+        return str(p)
+    default_name = "paper.yaml" if paper else "trading.yaml"
+    return str(PROJECT_ROOT / "configs" / default_name)
 
 
 def _find_factor_jsons() -> List[str]:
@@ -183,7 +201,7 @@ async def _broadcast(task_id: str, message: Dict[str, Any]):
 
 async def _run_mining(task_id: str, req: MiningStartRequest):
     """
-    Launch the actual QuantaAlpha mining experiment as a subprocess
+    Launch the actual LLMStrat mining experiment as a subprocess
     and stream its output over WebSocket.
     """
     task = tasks[task_id]
@@ -453,7 +471,7 @@ async def _run_mining(task_id: str, req: MiningStartRequest):
 
 @app.get("/")
 async def root():
-    return {"message": "QuantaAlpha API", "version": "2.0.0"}
+    return {"message": "LLMStrat API", "version": "2.0.0"}
 
 
 @app.get("/api/health")
@@ -1073,6 +1091,66 @@ def _load_backtest_results(task: Dict[str, Any]):
     except Exception as e:
         import traceback
         traceback.print_exc()  # print for debugging, but don't crash
+
+
+# ---- Trading endpoints ----
+
+@app.get("/api/v1/trading/status", response_model=ApiResponse)
+async def get_trading_status(
+    configPath: Optional[str] = Query(None),
+    paper: bool = Query(False),
+):
+    """Get paper/live trading runtime status from SQLite + broker account."""
+    try:
+        from quantaalpha.trading.engine import TradingEngine
+
+        config_path = _resolve_trading_config_path(configPath, paper=paper)
+        engine = TradingEngine.from_yaml(config_path=config_path, paper=paper)
+        status = engine.status()
+        return ApiResponse(success=True, data={"status": status})
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch trading status: {e}")
+
+
+@app.post("/api/v1/trading/rebalance", response_model=ApiResponse)
+async def run_trading_rebalance(req: TradingControlRequest):
+    """Trigger a manual rebalance cycle."""
+    try:
+        from quantaalpha.trading.engine import TradingEngine
+
+        config_path = _resolve_trading_config_path(req.configPath, paper=req.paper)
+        overrides = {}
+        if req.dryRun is not None:
+            overrides["execution"] = {"dry_run": bool(req.dryRun)}
+        engine = TradingEngine.from_yaml(
+            config_path=config_path,
+            paper=req.paper,
+            overrides=overrides or None,
+        )
+        result = engine.rebalance_once(reason="api_manual").to_dict()
+        return ApiResponse(success=True, data={"result": result}, message="手动调仓已执行")
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Manual rebalance failed: {e}")
+
+
+@app.post("/api/v1/trading/stop", response_model=ApiResponse)
+async def stop_trading(req: TradingControlRequest):
+    """Disable trading runtime and optionally flatten all holdings."""
+    try:
+        from quantaalpha.trading.engine import TradingEngine
+
+        config_path = _resolve_trading_config_path(req.configPath, paper=req.paper)
+        engine = TradingEngine.from_yaml(config_path=config_path, paper=req.paper)
+        status = engine.stop(flatten=bool(req.flatten))
+        return ApiResponse(success=True, data={"status": status}, message="交易引擎已停止")
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Stop trading failed: {e}")
 
 
 # ---- System config endpoints ----
