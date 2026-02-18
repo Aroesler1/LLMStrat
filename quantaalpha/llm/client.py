@@ -236,6 +236,7 @@ class SQliteLazyCache(SingletonBaseClass):
         # TODO: sqlite3 does not support multiprocessing.
         self.conn = sqlite3.connect(cache_location, timeout=20)
         self.c = self.conn.cursor()
+        self.c.execute("PRAGMA journal_mode=WAL")
         if not db_file_exist:
             self.c.execute(
                 """
@@ -1168,7 +1169,6 @@ class APIBackend:
         return resp, finish_reason
 
     def calculate_token_from_messages(self, messages: list[dict]) -> int:
-        return 0
         if self.use_llama2 or self.use_gcr_endpoint:
             logger.warning("num_tokens_from_messages() is not implemented for model llama2.")
             return 0  # TODO implement this function for llama2

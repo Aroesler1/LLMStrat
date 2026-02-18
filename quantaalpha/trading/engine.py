@@ -4,7 +4,10 @@ Trading runtime engine for paper/live retail deployment.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+import subprocess
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -82,6 +85,7 @@ class TradingEngine:
             heartbeat_callback=self.scheduled_heartbeat,
             config=self.scheduler_cfg,
         )
+        self._save_startup_metadata()
 
     @classmethod
     def from_yaml(
@@ -113,6 +117,36 @@ class TradingEngine:
                 TradingEngine._deep_update(base[k], v)
             else:
                 base[k] = v
+
+    def _save_startup_metadata(self) -> None:
+        config_blob = json.dumps(self.config, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        config_hash = hashlib.sha256(config_blob.encode("utf-8")).hexdigest()
+        git_hash: Optional[str] = None
+        try:
+            repo_root = Path(__file__).resolve().parents[2]
+            git_hash = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+                cwd=str(repo_root),
+                text=True,
+            ).strip()
+        except Exception as e:
+            self.alerts.warning(
+                message="Unable to resolve git hash at startup",
+                data={"error": str(e)},
+                event_type="runtime",
+            )
+
+        self.db.upsert_runtime_state("config_hash", config_hash)
+        self.db.upsert_runtime_state("git_hash", git_hash)
+        self.db.upsert_runtime_state(
+            "startup_metadata",
+            {
+                "config_hash": config_hash,
+                "git_hash": git_hash,
+                "config_path": self.config_path,
+                "started_at": datetime.utcnow().isoformat(),
+            },
+        )
 
     def _build_broker(self, broker_cfg: Dict[str, Any]) -> BrokerAPI:
         provider = str(broker_cfg.get("provider", "mock")).lower()

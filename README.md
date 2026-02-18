@@ -48,6 +48,12 @@ pip install -e .
 pip install -r requirements.txt
 ```
 
+Dependency lockfile:
+
+```bash
+pip install -r requirements.lock
+```
+
 ### 3. Environment file
 
 ```bash

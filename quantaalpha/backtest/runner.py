@@ -1174,6 +1174,7 @@ class BacktestRunner:
             "factor_source": factor_source,
             "num_factors": num_factors,
             "metrics": metrics,
+            "config_full": self.config,
             "config": {
                 "data_range": f"{self.config['data']['start_time']} ~ {self.config['data']['end_time']}",
                 "test_range": f"{self.config['dataset']['segments']['test'][0]} ~ {self.config['dataset']['segments']['test'][1]}",
