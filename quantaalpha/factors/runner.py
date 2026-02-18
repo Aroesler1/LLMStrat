@@ -183,6 +183,12 @@ class QlibFactorRunner(CachedRunner[QlibFactorExperiment]):
         timeout_shim_dir = Path(__file__).resolve().parents[2] / "scripts" / "bin"
         if timeout_shim_dir.exists():
             run_env["PATH"] = f"{timeout_shim_dir}:{os.environ.get('PATH', '')}"
+        project_root = str(Path(__file__).resolve().parents[2])
+        run_env["PYTHONPATH"] = (
+            f"{project_root}:{os.environ.get('PYTHONPATH', '')}"
+            if os.environ.get("PYTHONPATH")
+            else project_root
+        )
         run_env["PYTHONWARNINGS"] = build_pythonwarnings_filter(os.environ.get("PYTHONWARNINGS"))
 
         result_tuple = exp.experiment_workspace.execute(
