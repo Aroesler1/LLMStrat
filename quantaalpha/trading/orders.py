@@ -114,6 +114,7 @@ class OrderManager:
         return sells + buys
 
     def submit_orders(self, orders: List[ProposedOrder], rebalance_id: str) -> List[str]:
+        submit_started = time.perf_counter()
         ids: List[str] = []
         min_interval = 1.0 / self.rate_limit_per_second if self.rate_limit_per_second > 0 else 0.0
         last_submit_at: Optional[float] = None
@@ -149,9 +150,17 @@ class OrderManager:
                         "rebalance_id": rebalance_id,
                     }
                 )
+        logger.info(
+            "Order submission completed: rebalance_id={} submitted={} duration_s={:.4f} rate_limit_per_second={}",
+            rebalance_id,
+            len(ids),
+            time.perf_counter() - submit_started,
+            self.rate_limit_per_second,
+        )
         return ids
 
     def poll_terminal(self, order_ids: List[str], timeout_seconds: int = 300, poll_interval: float = 2.0):
+        poll_started = time.perf_counter()
         start = time.time()
         remaining = set(order_ids)
         terminal = {
@@ -160,7 +169,9 @@ class OrderManager:
             OrderState.REJECTED,
             OrderState.EXPIRED,
         }
+        polls = 0
         while remaining and (time.time() - start) < timeout_seconds:
+            polls += 1
             done = []
             for oid in list(remaining):
                 st = self.broker.get_order_status(oid)
@@ -195,6 +206,15 @@ class OrderManager:
             except Exception as e:
                 logger.exception("Failed to cancel stale order {}: {}", oid, e)
             self._update_order_state(oid=oid, next_state=OrderState.CANCELLED)
+        timed_out = len(remaining) > 0
+        logger.info(
+            "Order polling completed: total_orders={} remaining={} timed_out={} polls={} duration_s={:.4f}",
+            len(order_ids),
+            len(remaining),
+            timed_out,
+            polls,
+            time.perf_counter() - poll_started,
+        )
 
     @staticmethod
     def _normalize_state(state: str) -> Optional[OrderState]:

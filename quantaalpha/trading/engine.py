@@ -92,6 +92,7 @@ class TradingEngine:
             db=self.db,
             alerts=self.alerts,
             stale_seconds=int(monitor_cfg.get("stale_seconds", 600)),
+            broker=self.broker,
         )
 
         self.scheduler_cfg = config.get("scheduler", {}) or {}

@@ -12,7 +12,36 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 
+try:
+    from jsonschema import Draft202012Validator
+except Exception:  # pragma: no cover - dependency can be optional in some runtimes
+    Draft202012Validator = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
+
+FACTOR_LIBRARY_SCHEMA = {
+    "type": "object",
+    "required": ["factors"],
+    "properties": {
+        "factors": {
+            "type": "object",
+            "additionalProperties": {
+                "type": "object",
+                "required": ["factor_expression"],
+                "properties": {
+                    "factor_name": {"type": "string"},
+                    "factor_expression": {"type": "string", "minLength": 1},
+                    "factor_description": {"type": "string"},
+                    "quality": {"type": "string"},
+                    "variables": {"type": "object"},
+                    "cache_location": {"type": "string"},
+                },
+                "additionalProperties": True,
+            },
+        }
+    },
+    "additionalProperties": True,
+}
 
 
 class FactorLoader:
@@ -257,6 +286,23 @@ class FactorLoader:
         """Args: config: config dict."""
         self.config = config
         self.factor_source_config = config.get('factor_source', {})
+        self._schema_validator = Draft202012Validator(FACTOR_LIBRARY_SCHEMA) if Draft202012Validator is not None else None
+
+    def _validate_factor_schema(self, data: Dict[str, Any], file_path: Path) -> None:
+        if self._schema_validator is None:
+            logger.warning("jsonschema is unavailable; skipping factor schema validation for %s", file_path)
+            return
+
+        errors = sorted(self._schema_validator.iter_errors(data), key=lambda err: list(err.path))
+        if not errors:
+            return
+
+        details = []
+        for err in errors[:5]:
+            loc = ".".join(str(p) for p in err.path) or "<root>"
+            details.append(f"{loc}: {err.message}")
+        detail_msg = "; ".join(details)
+        raise ValueError(f"Invalid factor JSON schema in {file_path}: {detail_msg}")
         
     def load_factors(self) -> Tuple[Dict[str, str], List[Dict]]:
         """
@@ -353,6 +399,7 @@ class FactorLoader:
         """Parse all factors from JSON; returns list of dicts with cache_location if present."""
         with open(file_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
+        self._validate_factor_schema(data, file_path)
         
         factors = data.get('factors', {})
         result = []
@@ -414,6 +461,7 @@ class FactorLoader:
         """Parse factor JSON; returns (qlib_compatible, needs_llm)."""
         with open(file_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
+        self._validate_factor_schema(data, file_path)
         
         factors = data.get('factors', {})
         qlib_compatible = {}
@@ -532,4 +580,3 @@ class FactorLoader:
                 'type': source_type,
                 'description': 'Unknown factor source'
             }
-

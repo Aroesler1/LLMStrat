@@ -49,6 +49,7 @@ sqlalchemy>=2.0,<3.0       # Trading state persistence (SQLite ORM)
 apscheduler>=3.10,<4.0     # Trading schedule orchestration
 alpaca-py>=0.20            # Alpaca brokerage and market data API
 yfinance>=0.2.40           # Lightweight fallback historical/live bars
+jsonschema>=4.0            # JSON schema validation for factor libraries
 
 # -----------------------------------------------------------------------------
 # Build & versioning

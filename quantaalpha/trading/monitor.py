@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 
 from quantaalpha.storage.database import DatabaseManager
 from quantaalpha.trading.alerts import AlertManager
+from quantaalpha.trading.broker import BrokerAPI
 
 
 class HealthMonitor:
@@ -17,10 +18,12 @@ class HealthMonitor:
         db: DatabaseManager,
         alerts: Optional[AlertManager] = None,
         stale_seconds: int = 600,
+        broker: Optional[BrokerAPI] = None,
     ):
         self.db = db
         self.alerts = alerts
         self.stale_seconds = int(stale_seconds)
+        self.broker = broker
 
     def heartbeat(self, component: str, payload: Optional[Dict[str, Any]] = None):
         state = {
@@ -56,10 +59,28 @@ class HealthMonitor:
                 stale_components.append(key)
 
         healthy = len(stale_components) == 0
+        broker_connectivity: Dict[str, Any] = {"ok": True}
+        if self.broker is not None:
+            try:
+                account = self.broker.get_account()
+                broker_connectivity = {
+                    "ok": True,
+                    "equity": float(account.equity),
+                    "cash": float(account.cash),
+                }
+            except Exception as e:
+                broker_connectivity = {
+                    "ok": False,
+                    "error": str(e),
+                }
+                healthy = False
+                stale_components.append("broker.connectivity")
+
         status = {
             "healthy": healthy,
             "stale_components": stale_components,
             "heartbeat": heartbeat,
+            "broker_connectivity": broker_connectivity,
             "latest_snapshot": self.db.get_latest_snapshot(),
         }
 
