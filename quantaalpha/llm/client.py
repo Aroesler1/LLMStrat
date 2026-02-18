@@ -31,6 +31,10 @@ class EmptyLLMResponseError(RuntimeError):
     """Raised when the model returns an empty completion."""
 
 
+class LLMBudgetExceededError(RuntimeError):
+    """Raised when LLM safety budgets are exceeded."""
+
+
 _LLM_BUDGET_LOCK = threading.Lock()
 _LLM_BUDGET_STATE = {
     "requests": 0,
@@ -43,7 +47,7 @@ def _reserve_llm_request() -> None:
     cap = int(getattr(LLM_SETTINGS, "llm_max_requests_per_run", 0) or 0)
     with _LLM_BUDGET_LOCK:
         if cap > 0 and _LLM_BUDGET_STATE["requests"] >= cap:
-            raise RuntimeError(
+            raise LLMBudgetExceededError(
                 f"LLM request budget exceeded: {_LLM_BUDGET_STATE['requests']} >= {cap}. "
                 "Increase LLM_MAX_REQUESTS_PER_RUN only if intentional."
             )
@@ -63,7 +67,7 @@ def _record_llm_tokens(tokens: int | None) -> None:
     with _LLM_BUDGET_LOCK:
         _LLM_BUDGET_STATE["total_tokens"] += tok
         if cap > 0 and _LLM_BUDGET_STATE["total_tokens"] > cap:
-            raise RuntimeError(
+            raise LLMBudgetExceededError(
                 f"LLM token budget exceeded: {_LLM_BUDGET_STATE['total_tokens']} > {cap}. "
                 "Increase LLM_MAX_TOTAL_TOKENS_PER_RUN only if intentional."
             )
@@ -778,6 +782,9 @@ class APIBackend:
                 if i < max_retry - 1:
                     time.sleep(self.retry_wait_seconds)
             except Exception as e:  # noqa: BLE001
+                if isinstance(e, LLMBudgetExceededError):
+                    # Budget exhaustion is deterministic; retries only add noise.
+                    raise
                 logger.warning(e)
                 logger.warning(f"Retrying {i+1}th time...")
                 if i < max_retry - 1:

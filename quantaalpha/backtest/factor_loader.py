@@ -34,7 +34,21 @@ FACTOR_LIBRARY_SCHEMA = {
                     "factor_description": {"type": "string"},
                     "quality": {"type": "string"},
                     "variables": {"type": "object"},
-                    "cache_location": {"type": "string"},
+                    "cache_location": {
+                        "oneOf": [
+                            {"type": "string"},
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "workspace_suffix": {"type": "string"},
+                                    "workspace_path": {"type": "string"},
+                                    "factor_dir": {"type": "string"},
+                                    "result_h5_path": {"type": "string"},
+                                },
+                                "additionalProperties": True,
+                            },
+                        ]
+                    },
                 },
                 "additionalProperties": True,
             },
@@ -423,13 +437,27 @@ class FactorLoader:
                 'factor_description': factor_info.get('factor_description', ''),
             }
             
-            cache_location = factor_info.get('cache_location')
+            cache_location = self._normalize_cache_location(factor_info.get('cache_location'))
             if cache_location:
                 factor_dict['cache_location'] = cache_location
             
             result.append(factor_dict)
         
         return result
+
+    @staticmethod
+    def _normalize_cache_location(cache_location: Any) -> Optional[Dict[str, Any]]:
+        """
+        Normalize cache_location to dict for downstream custom factor loading.
+        Accepts legacy string path and current object formats.
+        """
+        if isinstance(cache_location, dict):
+            return cache_location
+        if isinstance(cache_location, str):
+            normalized = cache_location.strip()
+            if normalized:
+                return {"result_h5_path": normalized}
+        return None
     
     def _load_combined_factors(self) -> Tuple[Dict[str, str], List[Dict]]:
         """Load combined factors (official + custom)."""

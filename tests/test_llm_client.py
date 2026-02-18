@@ -1,3 +1,6 @@
+import pytest
+
+from quantaalpha.llm import client as llm_client
 from quantaalpha.llm.client import APIBackend
 
 
@@ -57,3 +60,47 @@ def test_get_encoder_maps_gpt5_alias_to_o200k_base(monkeypatch) -> None:
 
     assert isinstance(encoder, _DummyEncoder)
     assert called["name"] == "o200k_base"
+
+
+def test_reserve_llm_request_raises_budget_exception(monkeypatch) -> None:
+    previous_cap = getattr(llm_client.LLM_SETTINGS, "llm_max_requests_per_run", None)
+    previous_requests = llm_client._LLM_BUDGET_STATE["requests"]
+    monkeypatch.setattr(llm_client.LLM_SETTINGS, "llm_max_requests_per_run", 1, raising=False)
+    llm_client._LLM_BUDGET_STATE["requests"] = 1
+
+    try:
+        with pytest.raises(llm_client.LLMBudgetExceededError, match="LLM request budget exceeded"):
+            llm_client._reserve_llm_request()
+    finally:
+        llm_client._LLM_BUDGET_STATE["requests"] = previous_requests
+        monkeypatch.setattr(
+            llm_client.LLM_SETTINGS,
+            "llm_max_requests_per_run",
+            previous_cap,
+            raising=False,
+        )
+
+
+def test_try_create_chat_completion_stops_retry_on_budget_error(monkeypatch) -> None:
+    backend = object.__new__(APIBackend)
+    sleep_calls = {"count": 0}
+
+    def _raise_budget(*args, **kwargs):
+        raise llm_client.LLMBudgetExceededError("LLM request budget exceeded: 60 >= 60")
+
+    monkeypatch.setattr(APIBackend, "_create_chat_completion_auto_continue", _raise_budget)
+    monkeypatch.setattr(
+        llm_client.time,
+        "sleep",
+        lambda *_args, **_kwargs: sleep_calls.__setitem__("count", sleep_calls["count"] + 1),
+    )
+
+    with pytest.raises(llm_client.LLMBudgetExceededError):
+        APIBackend._try_create_chat_completion_or_embedding(
+            backend,
+            max_retry=3,
+            chat_completion=True,
+            messages=[],
+        )
+
+    assert sleep_calls["count"] == 0
