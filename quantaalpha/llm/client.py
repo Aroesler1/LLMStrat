@@ -405,6 +405,9 @@ class APIBackend:
         use_embedding_cache: bool | None = None,
         dump_embedding_cache: bool | None = None,
     ) -> None:
+        # Lazily initialized encoder for token estimation.
+        # Some model aliases/deployments are not recognized by tiktoken.
+        self.encoder = None
         # Prefer QA_REASONING_EFFORT to avoid colliding with rdagent's REASONING_EFFORT validation.
         self.reasoning_effort = (
             os.environ.get("QA_REASONING_EFFORT")
@@ -1173,6 +1176,23 @@ class APIBackend:
             logger.warning("num_tokens_from_messages() is not implemented for model llama2.")
             return 0  # TODO implement this function for llama2
 
+        encoder = getattr(self, "encoder", None)
+        if encoder is None:
+            try:
+                encoder = self._get_encoder()
+            except Exception as exc:
+                # Custom deployment names and offline environments may fail encoder resolution.
+                logger.warning(
+                    f"Failed to resolve tiktoken encoder for model {getattr(self, 'chat_model', '<unknown>')}: {exc}. "
+                    "Falling back to cl100k_base."
+                )
+                try:
+                    encoder = tiktoken.get_encoding("cl100k_base")
+                except Exception as fallback_exc:
+                    logger.warning(f"Fallback encoder unavailable; skip token estimation: {fallback_exc}")
+                    return 0
+            self.encoder = encoder
+
         if "gpt4" in self.chat_model or "gpt-4" in self.chat_model:
             tokens_per_message = 3
             tokens_per_name = 1
@@ -1183,7 +1203,7 @@ class APIBackend:
         for message in messages:
             num_tokens += tokens_per_message
             for key, value in message.items():
-                num_tokens += len(self.encoder.encode(value))
+                num_tokens += len(encoder.encode(str(value)))
                 if key == "name":
                     num_tokens += tokens_per_name
         num_tokens += 3  # every reply is primed with <start>assistant<message>
