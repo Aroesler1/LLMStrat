@@ -1,0 +1,79 @@
+project:
+  name: sp500_research
+  region: us
+  timezone: America/New_York
+
+data:
+  bars_path: data/us_equities/processed/daily_bars.parquet
+  membership_parquet: data/us_equities/reference/sp500_membership_daily.parquet
+  ticker_mapping_file: data/us_equities/reference/ticker_mapping.csv
+  sector_file: data/us_equities/reference/gics_sectors.csv
+  calendar: XNYS
+  earliest_data_date: "1998-01-01"
+
+universe:
+  type: sp500_pit
+  use_historical_universe: true
+  membership_parquet: data/us_equities/reference/sp500_membership_daily.parquet
+  ticker_mapping_file: data/us_equities/reference/ticker_mapping.csv
+  min_members: 480
+  max_members: 510
+
+execution_alignment:
+  signal_lag_days: 1
+  entry_price: open
+  exit_price: open
+  rebalance_frequency_days: 1
+
+labels:
+  primary:
+    type: close_to_close
+    horizon_days: 1
+    cross_sectional_rank: true
+    sector_neutralize: true
+  secondary:
+    type: close_to_close
+    horizon_days: 5
+    cross_sectional_rank: true
+    sector_neutralize: false
+
+model:
+  type: lightgbm_ranker
+  objective: lambdarank
+  num_leaves: 31
+  learning_rate: 0.05
+  n_estimators: 500
+  early_stopping_rounds: 50
+  random_seed: 42
+
+walk_forward:
+  initial_train_months: 60
+  validation_months: 12
+  test_months: 3
+  embargo_days: 5
+  retrain_frequency_days: 63
+  expanding_window: true
+  warm_up_trading_days: 252
+  sample_weight:
+    method: exponential_decay
+    half_life_years: 5
+
+portfolio:
+  construction: topk_equal_weight
+  top_k: 30
+  dropout_rate: 0.0
+  max_weight_per_name: 0.05
+  max_sector_weight: 0.25
+  max_daily_turnover: 0.20
+  min_avg_daily_volume_usd: 5000000
+  long_only: true
+
+costs:
+  commission_per_share: 0.0
+  spread_bps: 1.5
+  slippage_bps: 1.0
+
+quality_gate:
+  mode: strict
+  completeness_warn: 490
+  completeness_halt: 480

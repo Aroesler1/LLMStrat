@@ -1,0 +1,158 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Optional
+
+import pandas as pd
+
+
+@dataclass
+class SignalConfig:
+    top_k: int = 30
+    max_weight: float = 0.05
+    long_only: bool = True
+    max_turnover_daily: float = 0.20
+    min_avg_dollar_volume: float = 5_000_000.0
+
+
+def _rank_by_date(series: pd.Series, dates: pd.Series, ascending: bool = True) -> pd.Series:
+    out = series.groupby(dates).rank(pct=True, method="average", ascending=ascending)
+    return out
+
+
+def _build_features(bars: pd.DataFrame) -> pd.DataFrame:
+    required_cols = {"date", "symbol", "close"}
+    missing = required_cols - set(bars.columns)
+    if missing:
+        raise ValueError(f"Missing required bar columns: {sorted(missing)}")
+
+    df = bars.copy()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.normalize()
+    df["symbol"] = df["symbol"].astype(str).str.upper()
+    if "adj_close" not in df.columns:
+        df["adj_close"] = df["close"]
+    if "dollar_volume" not in df.columns:
+        volume = pd.to_numeric(df.get("volume", 0), errors="coerce").fillna(0.0)
+        close = pd.to_numeric(df["close"], errors="coerce")
+        df["dollar_volume"] = close * volume
+
+    for col in ["close", "adj_close", "open", "high", "low", "volume", "dollar_volume"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    df = df.sort_values(["symbol", "date"]).reset_index(drop=True)
+
+    grp = df.groupby("symbol", group_keys=False)
+    ret1 = grp["adj_close"].pct_change()
+    df["mom_5d"] = grp["adj_close"].pct_change(5)
+    df["mom_21d"] = grp["adj_close"].pct_change(21)
+    df["rev_5d"] = -df["mom_5d"]
+    df["vol_21d"] = ret1.groupby(df["symbol"]).rolling(21, min_periods=10).std().reset_index(level=0, drop=True)
+    df["vol_63d"] = ret1.groupby(df["symbol"]).rolling(63, min_periods=20).std().reset_index(level=0, drop=True)
+
+    adv5 = grp["dollar_volume"].rolling(5, min_periods=3).mean().reset_index(level=0, drop=True)
+    adv20 = grp["dollar_volume"].rolling(20, min_periods=10).mean().reset_index(level=0, drop=True)
+    df["volume_accel"] = adv5 / adv20.replace(0, pd.NA)
+    df["adv20"] = adv20
+
+    if {"high", "low", "close"}.issubset(df.columns):
+        df["range"] = (df["high"] - df["low"]) / df["close"].replace(0, pd.NA)
+    else:
+        df["range"] = pd.NA
+
+    # Cross-sectional ranks per date.
+    df["r_mom_5d"] = _rank_by_date(df["mom_5d"], df["date"], ascending=True)
+    df["r_mom_21d"] = _rank_by_date(df["mom_21d"], df["date"], ascending=True)
+    df["r_rev_5d"] = _rank_by_date(df["rev_5d"], df["date"], ascending=True)
+    df["r_vol_21d"] = _rank_by_date(df["vol_21d"], df["date"], ascending=False)  # prefer lower vol
+    df["r_vol_ratio"] = _rank_by_date(df["vol_21d"] / df["vol_63d"].replace(0, pd.NA), df["date"], ascending=False)
+    df["r_volume_accel"] = _rank_by_date(df["volume_accel"], df["date"], ascending=True)
+    df["r_range"] = _rank_by_date(df["range"], df["date"], ascending=False)
+
+    rank_cols = [
+        "r_mom_5d",
+        "r_mom_21d",
+        "r_rev_5d",
+        "r_vol_21d",
+        "r_vol_ratio",
+        "r_volume_accel",
+        "r_range",
+    ]
+    df["score"] = df[rank_cols].mean(axis=1, skipna=True)
+    return df
+
+
+def _apply_turnover_cap(
+    desired_weights: dict[str, float],
+    previous_weights: Optional[dict[str, float]],
+    max_turnover_daily: float,
+    max_weight: float,
+) -> dict[str, float]:
+    if not previous_weights or max_turnover_daily <= 0:
+        return desired_weights
+
+    symbols = sorted(set(desired_weights) | set(previous_weights))
+    turnover = sum(abs(desired_weights.get(s, 0.0) - previous_weights.get(s, 0.0)) for s in symbols)
+    if turnover <= max_turnover_daily:
+        return desired_weights
+
+    scale = max_turnover_daily / turnover if turnover > 0 else 0.0
+    blended = {}
+    for s in symbols:
+        prev = previous_weights.get(s, 0.0)
+        target = desired_weights.get(s, 0.0)
+        w = prev + scale * (target - prev)
+        blended[s] = max(0.0, min(max_weight, w))
+
+    total = sum(blended.values())
+    if total > 1.0 and total > 0:
+        blended = {s: w / total for s, w in blended.items()}
+
+    return {s: w for s, w in blended.items() if w > 1e-8}
+
+
+def generate_signals(
+    bars: pd.DataFrame,
+    *,
+    config: SignalConfig,
+    as_of: Optional[str | pd.Timestamp] = None,
+    active_universe: Optional[list[str]] = None,
+    previous_weights: Optional[dict[str, float]] = None,
+) -> pd.DataFrame:
+    """Generate daily long-only TopK weights from baseline factor ranks."""
+    feats = _build_features(bars)
+    if feats.empty:
+        return pd.DataFrame(columns=["date", "symbol", "score", "weight"])
+
+    as_of_date = pd.Timestamp(as_of).normalize() if as_of is not None else feats["date"].max()
+    today = feats[feats["date"] == as_of_date].copy()
+
+    if active_universe:
+        allowed = {s.upper() for s in active_universe}
+        today = today[today["symbol"].isin(allowed)]
+
+    today = today[today["adv20"].fillna(0.0) >= float(config.min_avg_dollar_volume)]
+    today = today.dropna(subset=["score"]).sort_values("score", ascending=False)
+    if today.empty:
+        return pd.DataFrame(columns=["date", "symbol", "score", "weight"])
+
+    selected = today.head(int(config.top_k)).copy()
+    if selected.empty:
+        return pd.DataFrame(columns=["date", "symbol", "score", "weight"])
+
+    equal_weight = min(1.0 / len(selected), float(config.max_weight))
+    desired = {row.symbol: equal_weight for row in selected.itertuples(index=False)}
+
+    # Keep residual cash when top_k * cap < 1.0.
+    weights = _apply_turnover_cap(
+        desired,
+        previous_weights=previous_weights,
+        max_turnover_daily=float(config.max_turnover_daily),
+        max_weight=float(config.max_weight),
+    )
+
+    selected["weight"] = selected["symbol"].map(weights).fillna(0.0)
+    selected = selected[selected["weight"] > 0]
+
+    out = selected[["date", "symbol", "score", "weight"]].sort_values("symbol")
+    return out.reset_index(drop=True)

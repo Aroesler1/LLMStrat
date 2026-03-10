@@ -1,0 +1,10 @@
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+US_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = US_ROOT.parent
+for _p in (str(US_ROOT), str(REPO_ROOT)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)

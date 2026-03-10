@@ -1,0 +1,78 @@
+# US paper trading profile (separate from CN configs)
+broker:
+  provider: alpaca
+  paper: true
+  base_url: https://paper-api.alpaca.markets
+  api_key_env: ALPACA_PAPER_API_KEY
+  secret_key_env: ALPACA_PAPER_API_SECRET
+  timeout_seconds: 30
+
+storage:
+  db_path: data/results/trading/paper_sp500_state.sqlite
+
+execution:
+  mode: paper
+  require_market_open: true
+  fractional_shares: true
+  cash_buffer_pct: 0.02
+  min_trade_dollars: 25.0
+  time_in_force: opg
+  rate_limit_per_second: 5.0
+  dry_run: false
+  poll_timeout_seconds: 240
+  poll_interval_seconds: 2.0
+
+scheduler:
+  enabled: true
+  timezone: America/New_York
+  evening_run_time: "20:00"
+  order_submission_time: "20:00"
+  order_submission_deadline: "09:25"
+  fill_verification_time: "09:35"
+  reconciliation_time: "10:00"
+  rebalance_cron: "0 20 * * 1-5"
+  verification_cron: "25 9 * * 1-5"
+  reconciliation_cron: "0 10 * * 1-5"
+  heartbeat_seconds: 60
+
+signals:
+  mode: file
+  signal_file: data/results/trading/latest_signals.csv
+  symbol_column: symbol
+  score_column: score
+  weight_column: weight
+  date_column: date
+  topk: 30
+  max_weight: 0.05
+  long_only: true
+
+risk:
+  max_position_pct: 0.05
+  max_drawdown_pct: 0.10
+  max_daily_loss_pct: 0.03
+  max_turnover_daily: 0.20
+  max_positions: 30
+  min_positions: 5
+  min_cash_pct: 0.02
+  max_portfolio_value: 250000.0
+  max_single_order_value: 12500.0
+  flatten_on_kill: true
+
+kill_switch:
+  drawdown:
+    threshold: 0.10
+    measurement: end_of_day_equity
+    grace_period_trading_days: 5
+  daily_loss:
+    threshold: 0.03
+    measurement: close_to_close
+  reconciliation_failures_pause: 2
+  data_failures_pause: 3
+
+session:
+  timezone: America/New_York
+  open_time: "09:30"
+  close_time: "16:00"
+
+monitor:
+  stale_seconds: 600
