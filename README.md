@@ -339,45 +339,6 @@ From a systems perspective, the project required work across:
 - runtime fault handling
 - test-driven refactoring
 
-## Skills Demonstrated
-
-For a technical reviewer, the project reflects breadth across several domains rather than depth in only one narrow area.
-
-### Data Engineering
-
-- integrating multiple market-data sources behind a common interface
-- handling source preference and fallback behavior
-- normalizing historical equity data into a usable research format
-- managing artifact generation for downstream research and trading stages
-
-### Quantitative Research Engineering
-
-- implementing point-in-time universe logic
-- building baseline cross-sectional features from daily OHLCV data
-- designing walk-forward evaluation flows
-- enforcing promotion gates around Sharpe, drawdown, turnover, concentration, and baseline comparison
-
-### Execution And Trading Systems
-
-- translating model weights into broker-ready orders
-- simulating retail-realistic execution assumptions in research
-- adding operational risk controls around notional size, buying power, session timing, and reconciliation
-- supporting paper and live modes through the same trading path
-
-### Applied LLM Systems
-
-- constraining model usage to a narrow research task
-- enforcing exact model selection and fallback policy
-- validating generated expressions before they can affect research outputs
-- using budgets, structured output expectations, and early-stop criteria to reduce model failure modes
-
-### Software Engineering
-
-- designing a modular codebase with clear subsystem boundaries
-- writing regression tests for data, research, and runtime behavior
-- improving runtime performance where repeated computations were becoming the bottleneck
-- turning a research workflow into a repeatable, scriptable system
-
 ## Data Modes
 
 The project supports two operating modes.
