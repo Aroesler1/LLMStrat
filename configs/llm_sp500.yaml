@@ -1,8 +1,8 @@
 llm:
-  primary_model: kimi-k2.5
+  primary_model: gpt-5.4
   prompt_file: configs/prompts/factor_gen_us.txt
   fallback_models:
-    - gemini-2.5-flash
+    - gemini-3.1-pro
   excluded_models:
     - gemini-3.1-pro-preview
 
@@ -10,6 +10,9 @@ llm:
     max_retries: 3
     backoff_base_seconds: 2
     backoff_max_seconds: 60
+
+  request_timeout_seconds: 120
+  require_exact_model_catalog: true
 
   budget:
     max_requests_per_run: 250
@@ -20,3 +23,4 @@ llm:
     max_attempts_per_factor: 3
     max_batch_failure_rate: 0.50
     target_factors_per_run: 200
+    factors_per_request: 12

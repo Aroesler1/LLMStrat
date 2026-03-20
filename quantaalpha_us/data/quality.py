@@ -53,12 +53,13 @@ class DataQualityGate:
 
     @staticmethod
     def _normalize(df: pd.DataFrame) -> pd.DataFrame:
-        work = df.copy()
-        work["date"] = pd.to_datetime(work["date"], errors="coerce").dt.normalize()
-        work["symbol"] = work["symbol"].astype(str).str.upper()
+        work = df.copy().assign(
+            date=pd.to_datetime(df["date"], errors="coerce").dt.normalize(),
+            symbol=df["symbol"].astype(str).str.upper(),
+        )
         for col in ("open", "high", "low", "close", "adj_close", "volume", "dollar_volume"):
             if col in work.columns:
-                work[col] = pd.to_numeric(work[col], errors="coerce")
+                work.loc[:, col] = pd.to_numeric(work[col], errors="coerce")
         return work.dropna(subset=["date", "symbol"])
 
     def check_freshness(self, df: pd.DataFrame, target_date: pd.Timestamp) -> CheckResult:
@@ -87,9 +88,10 @@ class DataQualityGate:
 
         expected = None
         if membership_df is not None and not membership_df.empty:
-            m = membership_df.copy()
-            m["date"] = pd.to_datetime(m["date"], errors="coerce").dt.normalize()
-            m["symbol"] = m["symbol"].astype(str).str.upper()
+            m = membership_df.copy().assign(
+                date=pd.to_datetime(membership_df["date"], errors="coerce").dt.normalize(),
+                symbol=membership_df["symbol"].astype(str).str.upper(),
+            )
             active_col = m["active"] if "active" in m.columns else True
             expected = int(m[(m["date"] == target_date) & (active_col == True)]["symbol"].nunique())
 
@@ -141,8 +143,8 @@ class DataQualityGate:
 
         work = df.sort_values(["symbol", "date"]).copy()
         px = work["adj_close"] if "adj_close" in work.columns else work["close"]
-        work["ret_1d"] = px.groupby(work["symbol"]).pct_change()
-        same_day = work[work["date"] == target_date]
+        work = work.assign(ret_1d=px.groupby(work["symbol"]).pct_change())
+        same_day = work[work["date"] == target_date].copy()
 
         outliers = same_day[same_day["ret_1d"].abs() > self.outlier_abs_return]
         unexplained = outliers[~outliers["symbol"].isin(explained_symbols)]
@@ -188,9 +190,10 @@ class DataQualityGate:
         if membership_df is None or membership_df.empty:
             return CheckResult(True, "info", "Membership dataframe not provided", {"missing": 0})
 
-        m = membership_df.copy()
-        m["date"] = pd.to_datetime(m["date"], errors="coerce").dt.normalize()
-        m["symbol"] = m["symbol"].astype(str).str.upper()
+        m = membership_df.copy().assign(
+            date=pd.to_datetime(membership_df["date"], errors="coerce").dt.normalize(),
+            symbol=membership_df["symbol"].astype(str).str.upper(),
+        )
         if "active" in m.columns:
             expected = set(m[(m["date"] == target_date) & (m["active"] == True)]["symbol"])  # noqa: E712
         else:
@@ -215,15 +218,15 @@ class DataQualityGate:
             return CheckResult(True, "info", "adj_close not provided; check skipped", {})
 
         work = df.sort_values(["symbol", "date"]).copy()
-        work = work[(work["close"] > 0) & (work["adj_close"] > 0)]
-        work["adj_ratio"] = work["adj_close"] / work["close"]
-        work["adj_ratio_prev"] = work.groupby("symbol")["adj_ratio"].shift(1)
+        work = work[(work["close"] > 0) & (work["adj_close"] > 0)].copy()
+        work = work.assign(adj_ratio=work["adj_close"] / work["close"])
+        work = work.assign(adj_ratio_prev=work.groupby("symbol")["adj_ratio"].shift(1))
         same_day = work[work["date"] == target_date].copy()
 
         if same_day.empty:
             return CheckResult(False, "critical", "No data for adjusted consistency check", {"jumps": 0})
 
-        same_day["ratio_jump"] = (same_day["adj_ratio"] / same_day["adj_ratio_prev"] - 1.0).abs()
+        same_day = same_day.assign(ratio_jump=(same_day["adj_ratio"] / same_day["adj_ratio_prev"] - 1.0).abs())
         jumps = same_day[same_day["ratio_jump"] > 0.5]
         jump_count = int(len(jumps))
 

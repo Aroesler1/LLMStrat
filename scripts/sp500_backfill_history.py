@@ -17,7 +17,7 @@ for _p in (str(US_ROOT), str(US_ROOT.parent)):
 
 from quantaalpha_us.paths import resolve_from_us_root
 
-from quantaalpha_us.data.eodhd_client import EODHDClient  # noqa: E402
+from quantaalpha_us.data.market_data import build_market_data_client  # noqa: E402
 
 
 def _load_table(path: Path) -> pd.DataFrame:
@@ -45,6 +45,7 @@ def _save_dataframe(df: pd.DataFrame, path: Path) -> Path:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Backfill historical bars for S&P 500 historical constituents.")
     parser.add_argument("--api-token", default=None)
+    parser.add_argument("--source", choices=["auto", "crsp", "eodhd"], default="auto")
     parser.add_argument(
         "--membership-file",
         default="data/us_equities/reference/sp500_membership_daily.parquet",
@@ -68,42 +69,73 @@ def main() -> None:
     if membership.empty or "symbol" not in membership.columns:
         raise RuntimeError("Membership file is empty or missing symbol column")
 
-    symbols = sorted(set(membership["symbol"].astype(str).str.upper().tolist()))
+    membership = membership.copy().assign(symbol=membership["symbol"].astype(str).str.upper())
+    if "permno" in membership.columns:
+        membership = membership.assign(permno=pd.to_numeric(membership["permno"], errors="coerce").astype("Int64"))
+        requested = (
+            membership[["symbol", "permno"]]
+            .drop_duplicates()
+            .sort_values(["symbol", "permno"], na_position="last")
+            .to_dict("records")
+        )
+    else:
+        requested = [{"symbol": s, "permno": None} for s in sorted(set(membership["symbol"].tolist()))]
     if args.max_symbols and args.max_symbols > 0:
-        symbols = symbols[: args.max_symbols]
+        requested = requested[: args.max_symbols]
 
-    client = EODHDClient(
-        api_token=args.api_token,
-        cache_dir=str(resolve_from_us_root("data/us_equities/raw/cache", US_ROOT)),
+    client = build_market_data_client(
+        source=args.source,
+        eodhd_api_token=args.api_token,
+        eodhd_cache_dir=str(resolve_from_us_root("data/us_equities/raw/cache", US_ROOT)),
     )
 
     rows: list[pd.DataFrame] = []
     no_data: list[str] = []
-    for idx, symbol in enumerate(symbols, start=1):
-        df = client.get_eod_history(
-            symbol=symbol,
-            exchange="US",
+    if getattr(client, "source_name", "") == "crsp":
+        bars_batch = client.get_eod_history_batch(
+            requested,
             from_date=args.from_date,
             to_date=args.to_date,
-            use_cache=not args.no_cache,
         )
-        if df.empty:
-            no_data.append(symbol)
-        else:
-            rows.append(df)
+        if bars_batch.empty:
+            raise RuntimeError("No CRSP price data fetched for any requested symbol")
+        rows.append(bars_batch)
+        fetched = set(bars_batch["symbol"].astype(str).str.upper().unique().tolist())
+        for item in requested:
+            symbol = str(item["symbol"]).upper()
+            permno = item.get("permno")
+            if symbol not in fetched:
+                no_data.append(f"{symbol}:{int(permno)}" if pd.notna(permno) else symbol)
+        print(f"progress={len(requested)}/{len(requested)}")
+    else:
+        for idx, item in enumerate(requested, start=1):
+            symbol = str(item["symbol"]).upper()
+            permno = item.get("permno")
+            df = client.get_eod_history(
+                symbol=symbol,
+                exchange="US",
+                from_date=args.from_date,
+                to_date=args.to_date,
+                use_cache=not args.no_cache,
+                permno=int(permno) if pd.notna(permno) else None,
+            )
+            if df.empty:
+                no_data.append(f"{symbol}:{int(permno)}" if pd.notna(permno) else symbol)
+            else:
+                rows.append(df)
 
-        if idx % 25 == 0 or idx == len(symbols):
-            print(f"progress={idx}/{len(symbols)}")
+            if idx % 25 == 0 or idx == len(requested):
+                print(f"progress={idx}/{len(requested)}")
 
     if not rows:
         raise RuntimeError("No price data fetched for any symbol")
 
-    bars = pd.concat(rows, ignore_index=True)
-    bars["date"] = pd.to_datetime(bars["date"], errors="coerce").dt.normalize()
-    bars = bars.dropna(subset=["date", "symbol", "close"])
-    bars["symbol"] = bars["symbol"].astype(str).str.upper()
-    bars["dollar_volume"] = pd.to_numeric(bars["close"], errors="coerce") * pd.to_numeric(
-        bars["volume"], errors="coerce"
+    bars = pd.concat(rows, ignore_index=True).copy()
+    bars = bars.assign(date=pd.to_datetime(bars["date"], errors="coerce").dt.normalize())
+    bars = bars.dropna(subset=["date", "symbol", "close"]).copy()
+    bars = bars.assign(
+        symbol=bars["symbol"].astype(str).str.upper(),
+        dollar_volume=pd.to_numeric(bars["close"], errors="coerce") * pd.to_numeric(bars["volume"], errors="coerce"),
     )
 
     bars = bars.drop_duplicates(subset=["date", "symbol"], keep="last")
@@ -111,13 +143,14 @@ def main() -> None:
 
     saved_path = _save_dataframe(bars, output_path)
     summary = {
-        "symbols_requested": len(symbols),
+        "symbols_requested": len(requested),
         "symbols_with_data": int(bars["symbol"].nunique()),
         "rows": int(len(bars)),
         "date_min": str(bars["date"].min().date()),
         "date_max": str(bars["date"].max().date()),
         "output": str(saved_path),
         "symbols_without_data_sample": no_data[:25],
+        "source": client.source_name,
     }
     print(json.dumps(summary, indent=2))
 

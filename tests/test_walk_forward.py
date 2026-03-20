@@ -40,6 +40,7 @@ def test_walk_forward_runs_with_synthetic_data(tmp_path) -> None:
     membership_path = tmp_path / "membership.csv"
     membership.to_csv(membership_path, index=False)
     universe = SP500Universe(str(membership_path))
+    sector_map = {s: "Information Technology" for s in symbols}
 
     cfg = {
         "walk_forward": {
@@ -55,15 +56,28 @@ def test_walk_forward_runs_with_synthetic_data(tmp_path) -> None:
         "portfolio": {
             "top_k": 2,
             "max_weight_per_name": 0.5,
+            "max_sector_weight": 1.0,
             "long_only": True,
             "max_daily_turnover": 0.20,
             "min_avg_daily_volume_usd": 1000,
         },
-        "costs": {"spread_bps": 1.5, "slippage_bps": 1.0, "commission_per_share": 0.0},
+        "retail_execution": {
+            "starting_equity": 100000.0,
+            "cash_buffer_pct": 0.10,
+            "min_trade_dollars": 50.0,
+            "fractional_shares": True,
+            "max_participation_rate": 0.05,
+        },
+        "costs": {"spread_bps": 1.5, "slippage_bps": 1.0, "commission_per_share": 0.0, "impact_coefficient": 0.1},
     }
 
     runner = WalkForwardRunner(cfg)
-    result = runner.run(bars=bars, universe=universe, output_dir=tmp_path)
+    result = runner.run(bars=bars, universe=universe, output_dir=tmp_path, sector_map=sector_map)
     assert not result.returns.empty
     assert len(result.folds) > 0
     assert "net_return" in result.returns.columns
+    assert result.factor_overlap_score == 1.0
+    assert result.sector_pnl_share is not None
+    assert abs(sum(result.sector_pnl_share.values()) - 1.0) < 1e-9
+    assert float(result.returns["turnover"].max()) <= 1.0
+    assert float(result.returns["gross_exposure"].max()) <= 0.91

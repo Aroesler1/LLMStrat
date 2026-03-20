@@ -17,7 +17,7 @@ for _p in (str(US_ROOT), str(US_ROOT.parent)):
 
 from quantaalpha_us.paths import resolve_from_us_root
 
-from quantaalpha_us.data.eodhd_client import EODHDClient  # noqa: E402
+from quantaalpha_us.data.market_data import build_market_data_client  # noqa: E402
 from quantaalpha_us.data.quality import DataQualityGate  # noqa: E402
 
 
@@ -76,7 +76,7 @@ def _get_active_symbols_for_dates(membership: pd.DataFrame, dates: list[pd.Times
 
 def _backfill_missing_days(
     *,
-    client: EODHDClient,
+    client,
     symbols: list[str],
     missing_dates: list[pd.Timestamp],
     use_cache: bool,
@@ -116,6 +116,7 @@ def _backfill_missing_days(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Daily ingest of US bars from EODHD bulk endpoint.")
     parser.add_argument("--api-token", default=None)
+    parser.add_argument("--source", choices=["auto", "crsp", "eodhd"], default="auto")
     parser.add_argument("--date", default=str(date.today()), help="Trading date to ingest (YYYY-MM-DD)")
     parser.add_argument("--bars-file", default="data/us_equities/processed/daily_bars.parquet")
     parser.add_argument("--membership-file", default="data/us_equities/reference/sp500_membership_daily.parquet")
@@ -131,9 +132,10 @@ def main() -> None:
     bars_path = resolve_from_us_root(args.bars_file, US_ROOT)
     membership_path = resolve_from_us_root(args.membership_file, US_ROOT)
 
-    client = EODHDClient(
-        api_token=args.api_token,
-        cache_dir=str(resolve_from_us_root("data/us_equities/raw/cache", US_ROOT)),
+    client = build_market_data_client(
+        source=args.source,
+        eodhd_api_token=args.api_token,
+        eodhd_cache_dir=str(resolve_from_us_root("data/us_equities/raw/cache", US_ROOT)),
     )
     quality = DataQualityGate()
     use_cache = not args.no_cache
@@ -225,6 +227,7 @@ def main() -> None:
         "total_symbols": int(all_rows["symbol"].nunique()),
         "output": str(saved_path),
         "quality": report.to_dict(),
+        "source": client.source_name,
     }
     if gap_check is not None:
         summary["gap_check"] = {

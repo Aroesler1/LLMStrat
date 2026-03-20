@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable
 
@@ -45,28 +46,96 @@ class FactorMiningRuntime:
         self.max_batch_failure_rate = float(max_batch_failure_rate)
 
     @staticmethod
-    def _extract_factor_candidates(response: Any) -> list[str]:
+    def _content_to_text(content: Any) -> str:
+        if isinstance(content, str):
+            return content.strip()
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, dict):
+                    text = item.get("text")
+                    if text is not None:
+                        parts.append(str(text))
+                elif item is not None:
+                    parts.append(str(item))
+            return "\n".join(part.strip() for part in parts if str(part).strip()).strip()
+        if content is None:
+            return ""
+        return str(content).strip()
+
+    @staticmethod
+    def _extract_from_factors_list(items: Any) -> list[str]:
+        if not isinstance(items, list):
+            return []
+        out: list[str] = []
+        for item in items:
+            if isinstance(item, str) and item.strip():
+                out.append(item.strip())
+                continue
+            if isinstance(item, dict):
+                for key in ("expression", "expr", "factor", "formula"):
+                    value = item.get(key)
+                    if isinstance(value, str) and value.strip():
+                        out.append(value.strip())
+                        break
+        return out
+
+    @classmethod
+    def _extract_json_payload(cls, text: str) -> list[str]:
+        text = str(text).strip()
+        if not text:
+            return []
+
+        candidates = [text]
+        fenced = re.findall(r"```(?:json)?\s*(\{.*?\})\s*```", text, flags=re.DOTALL | re.IGNORECASE)
+        candidates.extend(fenced)
+
+        for candidate in candidates:
+            try:
+                parsed = json.loads(candidate)
+            except Exception:
+                continue
+            if isinstance(parsed, dict):
+                direct = cls._extract_from_factors_list(parsed.get("factors"))
+                if direct:
+                    return direct
+        return []
+
+    @staticmethod
+    def _extract_line_candidates(text: str) -> list[str]:
+        out: list[str] = []
+        for raw in str(text).splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            line = re.sub(r"^\d+[\).\s-]+", "", line)
+            line = re.sub(r"^[-*]\s+", "", line)
+            out.append(line.strip())
+        return out
+
+    @classmethod
+    def _extract_factor_candidates(cls, response: Any) -> list[str]:
         if response is None:
             return []
         if isinstance(response, dict):
-            if isinstance(response.get("factors"), list):
-                return [str(x).strip() for x in response["factors"] if str(x).strip()]
+            direct = cls._extract_from_factors_list(response.get("factors"))
+            if direct:
+                return direct
             choices = response.get("choices")
             if isinstance(choices, list) and choices:
                 msg = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
-                content = msg.get("content", "")
-                text = str(content).strip()
+                text = cls._content_to_text(msg.get("content", ""))
                 if not text:
                     return []
-                try:
-                    parsed = json.loads(text)
-                    if isinstance(parsed, dict) and isinstance(parsed.get("factors"), list):
-                        return [str(x).strip() for x in parsed["factors"] if str(x).strip()]
-                except Exception:
-                    pass
-                return [line.strip() for line in text.splitlines() if line.strip()]
+                extracted = cls._extract_json_payload(text)
+                if extracted:
+                    return extracted
+                return cls._extract_line_candidates(text)
         if isinstance(response, str):
-            return [line.strip() for line in response.splitlines() if line.strip()]
+            extracted = cls._extract_json_payload(response)
+            if extracted:
+                return extracted
+            return cls._extract_line_candidates(response)
         return []
 
     def run(
@@ -76,8 +145,10 @@ class FactorMiningRuntime:
         models: list[str],
         call_model: Callable[[str, str], Any],
         estimated_tokens_per_request: int = 512,
+        target_valid_factors: int | None = None,
     ) -> tuple[list[str], MiningStats]:
         valid: list[str] = []
+        seen_valid: set[str] = set()
         invalid = 0
         attempted = 0
         halted_reason: str | None = None
@@ -100,9 +171,16 @@ class FactorMiningRuntime:
             for expr in candidates:
                 sanitized = self.sanitizer.sanitize(expr)
                 if sanitized.valid:
-                    valid.append(sanitized.cleaned)
+                    if sanitized.cleaned not in seen_valid:
+                        valid.append(sanitized.cleaned)
+                        seen_valid.add(sanitized.cleaned)
                 else:
                     invalid += 1
+
+            if target_valid_factors is not None and len(valid) >= int(target_valid_factors):
+                valid = valid[: int(target_valid_factors)]
+                halted_reason = None
+                break
 
             total_seen = len(valid) + invalid
             if total_seen > 0:

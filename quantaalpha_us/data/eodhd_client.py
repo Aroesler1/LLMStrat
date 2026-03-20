@@ -48,6 +48,8 @@ class RateLimiter:
 class EODHDClient:
     """Thin EODHD REST client with retry, rate limiting, and optional file cache."""
 
+    source_name = "eodhd"
+
     def __init__(
         self,
         api_token: Optional[str] = None,
@@ -147,7 +149,9 @@ class EODHDClient:
         to_date: Optional[str] = None,
         *,
         use_cache: bool = False,
+        permno: Optional[int] = None,
     ) -> pd.DataFrame:
+        _ = permno
         symbol_code = self._normalize_symbol(symbol, exchange=exchange)
         data = self._request_json(
             f"/eod/{symbol_code}",
@@ -155,11 +159,11 @@ class EODHDClient:
             use_cache=use_cache,
         )
         if not isinstance(data, list):
-            return pd.DataFrame(columns=["date", "open", "high", "low", "close", "adj_close", "volume", "symbol"])
+            return pd.DataFrame(columns=["date", "open", "high", "low", "close", "adj_close", "volume", "symbol", "permno"])
 
         df = pd.DataFrame(data)
         if df.empty:
-            return pd.DataFrame(columns=["date", "open", "high", "low", "close", "adj_close", "volume", "symbol"])
+            return pd.DataFrame(columns=["date", "open", "high", "low", "close", "adj_close", "volume", "symbol", "permno"])
 
         rename_map = {
             "adjusted_close": "adj_close",
@@ -168,13 +172,19 @@ class EODHDClient:
         df = df.rename(columns=rename_map)
         for col in ("open", "high", "low", "close", "adj_close", "volume"):
             if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
+                df.loc[:, col] = pd.to_numeric(df[col], errors="coerce")
             else:
-                df[col] = pd.NA
+                df.loc[:, col] = pd.NA
         if "date" in df.columns:
-            df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.normalize()
-        df["symbol"] = str(symbol).upper()
-        return df[["date", "symbol", "open", "high", "low", "close", "adj_close", "volume"]].dropna(subset=["date"])
+            df = df.assign(date=pd.to_datetime(df["date"], errors="coerce").dt.normalize())
+        df = df.assign(symbol=str(symbol).upper(), permno=pd.NA)
+        return df[["date", "symbol", "open", "high", "low", "close", "adj_close", "volume", "permno"]].dropna(
+            subset=["date"]
+        )
+
+    def get_ticker_mapping(self, *, use_cache: bool = True) -> pd.DataFrame:
+        _ = use_cache
+        return pd.DataFrame(columns=["old_symbol", "new_symbol", "effective_date", "reason"])
 
     def get_bulk_eod(
         self,
@@ -202,13 +212,13 @@ class EODHDClient:
         }
         df = df.rename(columns=rename_map)
         if "symbol" in df.columns:
-            df["symbol"] = df["symbol"].astype(str).str.upper()
+            df = df.assign(symbol=df["symbol"].astype(str).str.upper())
         if "date" in df.columns:
-            df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.normalize()
+            df = df.assign(date=pd.to_datetime(df["date"], errors="coerce").dt.normalize())
 
         for col in ("open", "high", "low", "close", "adj_close", "volume"):
             if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
+                df.loc[:, col] = pd.to_numeric(df[col], errors="coerce")
 
         return df
 

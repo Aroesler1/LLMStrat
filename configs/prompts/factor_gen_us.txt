@@ -10,14 +10,20 @@ Context:
 - Holding style: short horizon, daily rebalance, long-only portfolio
 - Settlement context: US T+1 settlement; avoid assumptions tied to China A-share market structure
 
-Constraints:
-- Output factor expressions using only approved function library
-- No CN-specific assumptions (limit up/down rules, Stock Connect, SOE tags, T+1 no-sell constraints)
-- Keep expressions parsable and compact
-- Add brief economic rationale for each factor
-- Prefer factors robust across regimes and sectors
+Hard constraints:
+- Use only compact parsable factor expressions
+- No rationale, markdown, code fences, comments, numbering, or prose
+- No CN-specific assumptions or market microstructure
+- Avoid duplicated logic and trivial renamings
+- Prefer simple robust expressions over clever complexity
+- Keep each expression under 220 characters
 
-Quality goals:
-- Avoid overfit complexity
-- Avoid duplicated logic across factors
-- Provide diverse, orthogonal ideas across momentum, reversal, volatility, liquidity, and range behavior
+Return format:
+- Return valid JSON only
+- Top-level object must be exactly: {"factors":["expr1","expr2",...]}
+- `factors` must be an array of expression strings only
+- Do not include any keys besides `factors`
+
+Diversity goals:
+- Cover momentum, reversal, volatility, liquidity, volume acceleration, range, and interaction effects
+- Prefer ideas that are plausibly robust across sectors and regimes

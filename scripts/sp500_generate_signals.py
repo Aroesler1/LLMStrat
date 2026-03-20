@@ -49,10 +49,28 @@ def _signal_config_from_yaml(cfg: dict) -> SignalConfig:
     return SignalConfig(
         top_k=top_k,
         max_weight=max_weight,
+        max_sector_weight=float(portfolio_cfg.get("max_sector_weight", 1.0)),
         long_only=long_only,
         max_turnover_daily=max_turnover,
         min_avg_dollar_volume=min_adv,
     )
+
+
+def _load_sector_map(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    df = _load_table(path)
+    if df.empty or "symbol" not in df.columns:
+        return {}
+    sector_col = "sector" if "sector" in df.columns else None
+    if sector_col is None:
+        return {}
+    work = df[["symbol", sector_col]].dropna(subset=["symbol"]).copy()
+    work = work.assign(
+        symbol=work["symbol"].astype(str).str.upper(),
+        **{sector_col: work[sector_col].fillna("Unknown").astype(str)},
+    )
+    return dict(work.drop_duplicates(subset=["symbol"]).itertuples(index=False, name=None))
 
 
 def parse_args() -> argparse.Namespace:
@@ -77,20 +95,24 @@ def main() -> None:
     args = parse_args()
 
     config_path = resolve_from_us_root(args.config, US_ROOT)
+    cfg = _load_config(config_path)
     bars_path = resolve_from_us_root(args.bars_file, US_ROOT)
     membership_path = resolve_from_us_root(args.membership_file, US_ROOT)
     ticker_map_path = resolve_from_us_root(args.ticker_mapping_file, US_ROOT)
+    sector_path = resolve_from_us_root(
+        str((cfg.get("data", {}) if isinstance(cfg.get("data"), dict) else {}).get("sector_file", "data/us_equities/reference/gics_sectors.csv")),
+        US_ROOT,
+    )
     output_path = resolve_from_us_root(args.output, US_ROOT)
     metadata_path = resolve_from_us_root(args.metadata_output, US_ROOT)
 
-    cfg = _load_config(config_path)
     signal_cfg = _signal_config_from_yaml(cfg)
 
     bars = _load_table(bars_path)
     if bars.empty:
         raise RuntimeError(f"Bars file is empty or missing: {bars_path}")
 
-    bars["date"] = pd.to_datetime(bars["date"], errors="coerce").dt.normalize()
+    bars = bars.copy().assign(date=pd.to_datetime(bars["date"], errors="coerce").dt.normalize())
     bars = bars.dropna(subset=["date", "symbol"])
 
     as_of = pd.Timestamp(args.as_of).normalize() if args.as_of else bars["date"].max()
@@ -107,14 +129,17 @@ def main() -> None:
     prev_signals = _load_table(output_path)
     previous_weights = None
     if not prev_signals.empty and {"symbol", "weight"}.issubset(prev_signals.columns):
-        prev_signals["date"] = pd.to_datetime(prev_signals.get("date"), errors="coerce").dt.normalize()
+        prev_signals = prev_signals.copy().assign(
+            date=pd.to_datetime(prev_signals.get("date"), errors="coerce").dt.normalize()
+        )
         prev_date = prev_signals["date"].max()
-        prev_slice = prev_signals[prev_signals["date"] == prev_date]
-        previous_weights = {
-            str(r.symbol).upper(): float(r.weight)
-            for r in prev_slice.itertuples(index=False)
-            if pd.notna(r.weight)
-        }
+        if pd.notna(prev_date) and pd.Timestamp(prev_date).normalize() < as_of:
+            prev_slice = prev_signals[prev_signals["date"] == prev_date]
+            previous_weights = {
+                str(r.symbol).upper(): float(r.weight)
+                for r in prev_slice.itertuples(index=False)
+                if pd.notna(r.weight)
+            }
 
     signals = generate_signals(
         bars,
@@ -122,6 +147,7 @@ def main() -> None:
         as_of=as_of,
         active_universe=active,
         previous_weights=previous_weights,
+        sector_map=_load_sector_map(sector_path),
     )
     if signals.empty:
         raise RuntimeError("Signal generation produced no tradable symbols")

@@ -68,10 +68,18 @@ portfolio:
   min_avg_daily_volume_usd: 5000000
   long_only: true
 
+retail_execution:
+  starting_equity: 250000.0
+  cash_buffer_pct: 0.02
+  min_trade_dollars: 25.0
+  fractional_shares: true
+  max_participation_rate: 0.05
+
 costs:
   commission_per_share: 0.0
   spread_bps: 1.5
-  slippage_bps: 1.0
+  slippage_bps: 2.0
+  impact_coefficient: 0.15
 
 quality_gate:
   mode: strict

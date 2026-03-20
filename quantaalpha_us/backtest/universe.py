@@ -22,11 +22,13 @@ class SP500Universe:
     def __init__(self, membership_path: str, ticker_mapping_file: Optional[str] = None) -> None:
         self.membership_path = Path(membership_path)
         self.membership = self._load_membership(self.membership_path)
-        self.membership["date"] = pd.to_datetime(self.membership["date"], errors="coerce").dt.normalize()
-        self.membership["symbol"] = self.membership["symbol"].astype(str).str.upper()
+        self.membership = self.membership.copy().assign(
+            date=pd.to_datetime(self.membership["date"], errors="coerce").dt.normalize(),
+            symbol=self.membership["symbol"].astype(str).str.upper(),
+        )
         if "active" not in self.membership.columns:
-            self.membership["active"] = True
-        self.membership["active"] = self.membership["active"].astype(bool)
+            self.membership = self.membership.assign(active=True)
+        self.membership = self.membership.assign(active=self.membership["active"].astype(bool))
 
         self.membership = self.membership.dropna(subset=["date", "symbol"])
         self.membership = self.membership.sort_values(["date", "symbol"]).reset_index(drop=True)

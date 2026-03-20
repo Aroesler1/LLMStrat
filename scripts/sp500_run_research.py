@@ -36,6 +36,23 @@ def _load_table(path: Path) -> pd.DataFrame:
     return pd.read_csv(path)
 
 
+def _load_sector_map(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    df = _load_table(path)
+    if df.empty or "symbol" not in df.columns:
+        return {}
+    sector_col = "sector" if "sector" in df.columns else None
+    if sector_col is None:
+        return {}
+    work = df[["symbol", sector_col]].dropna(subset=["symbol"]).copy()
+    work = work.assign(
+        symbol=work["symbol"].astype(str).str.upper(),
+        **{sector_col: work[sector_col].fillna("Unknown").astype(str)},
+    )
+    return dict(work.drop_duplicates(subset=["symbol"]).itertuples(index=False, name=None))
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run US walk-forward research and validation gates.")
     parser.add_argument("--config", default="configs/backtest_sp500_research.yaml")
@@ -57,6 +74,7 @@ def main() -> None:
     bars_path = resolve_from_us_root(args.bars_file or str(data_cfg.get("bars_path", "data/us_equities/processed/daily_bars.parquet")), US_ROOT)
     membership_path = resolve_from_us_root(args.membership_file or str(data_cfg.get("membership_parquet", "data/us_equities/reference/sp500_membership_daily.parquet")), US_ROOT)
     ticker_mapping_file = resolve_from_us_root(args.ticker_mapping_file or str(data_cfg.get("ticker_mapping_file", "data/us_equities/reference/ticker_mapping.csv")), US_ROOT)
+    sector_file = resolve_from_us_root(str(data_cfg.get("sector_file", "data/us_equities/reference/gics_sectors.csv")), US_ROOT)
 
     if args.output_dir:
         output_dir = resolve_from_us_root(args.output_dir, US_ROOT)
@@ -71,14 +89,19 @@ def main() -> None:
 
     universe = SP500Universe(str(membership_path), ticker_mapping_file=str(ticker_mapping_file))
     runner = WalkForwardRunner(cfg)
-    wf_result = runner.run(bars=bars, universe=universe, output_dir=output_dir)
+    wf_result = runner.run(
+        bars=bars,
+        universe=universe,
+        output_dir=output_dir,
+        sector_map=_load_sector_map(sector_file),
+    )
 
     validator = BacktestValidation()
     gate_report = validator.run_all_gates(
         returns_df=wf_result.returns,
         n_trials=max(int(args.n_trials), 1),
-        factor_overlap_score=args.factor_overlap,
-        sector_pnl_share=None,
+        factor_overlap_score=args.factor_overlap if args.factor_overlap is not None else wf_result.factor_overlap_score,
+        sector_pnl_share=wf_result.sector_pnl_share,
     )
 
     gates_path = output_dir / "validation_gates.json"
@@ -90,6 +113,8 @@ def main() -> None:
         "membership_path": str(membership_path),
         "output_dir": str(output_dir),
         "walk_forward": wf_result.summary.to_dict(),
+        "sector_pnl_share": wf_result.sector_pnl_share,
+        "factor_overlap_score": wf_result.factor_overlap_score,
         "validation_passed": gate_report.passed,
         "validation_gates_path": str(gates_path),
     }

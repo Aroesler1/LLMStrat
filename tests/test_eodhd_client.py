@@ -21,7 +21,7 @@ def test_get_eod_history_columns(monkeypatch, tmp_path: Path) -> None:
 
     monkeypatch.setattr(client, "_request_json", fake_request_json)
     df = client.get_eod_history("aapl", exchange="US")
-    assert list(df.columns) == ["date", "symbol", "open", "high", "low", "close", "adj_close", "volume"]
+    assert list(df.columns) == ["date", "symbol", "open", "high", "low", "close", "adj_close", "volume", "permno"]
     assert df.iloc[0]["symbol"] == "AAPL"
 
 

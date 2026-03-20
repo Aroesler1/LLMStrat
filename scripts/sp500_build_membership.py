@@ -17,7 +17,7 @@ for _p in (str(US_ROOT), str(US_ROOT.parent)):
 
 from quantaalpha_us.paths import resolve_from_us_root
 
-from quantaalpha_us.data.eodhd_client import EODHDClient
+from quantaalpha_us.data.market_data import build_market_data_client
 from quantaalpha_us.data.membership import (  # noqa: E402
     build_membership_daily,
     default_ticker_mapping,
@@ -30,6 +30,7 @@ from quantaalpha_us.data.membership import (  # noqa: E402
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build point-in-time S&P 500 membership artifacts.")
     parser.add_argument("--api-token", default=None, help="EODHD API token. Defaults to EODHD_API_TOKEN env var.")
+    parser.add_argument("--source", choices=["auto", "crsp", "eodhd"], default="auto")
     parser.add_argument("--start-date", default="2000-01-03")
     parser.add_argument("--end-date", default=str(date.today()))
     parser.add_argument("--membership-out", default="data/us_equities/reference/sp500_membership_daily.parquet")
@@ -46,14 +47,15 @@ def main() -> None:
     sectors_out = resolve_from_us_root(args.sectors_out, US_ROOT)
     ticker_out = resolve_from_us_root(args.ticker_map_out, US_ROOT)
 
-    client = EODHDClient(
-        api_token=args.api_token,
-        cache_dir=str(resolve_from_us_root("data/us_equities/raw/cache", US_ROOT)),
+    client = build_market_data_client(
+        source=args.source,
+        eodhd_api_token=args.api_token,
+        eodhd_cache_dir=str(resolve_from_us_root("data/us_equities/raw/cache", US_ROOT)),
     )
 
     constituents = client.get_sp500_constituents_historical(use_cache=not args.no_cache)
     if constituents.empty:
-        raise RuntimeError("No constituents returned from EODHD fundamentals endpoint")
+        raise RuntimeError("No constituents returned from the configured primary/fallback data source")
 
     trading_days = get_trading_days(args.start_date, args.end_date)
     membership = build_membership_daily(
@@ -64,7 +66,9 @@ def main() -> None:
     )
 
     sectors = extract_sector_table(constituents)
-    ticker_map = default_ticker_mapping()
+    ticker_map = client.get_ticker_mapping(use_cache=not args.no_cache)
+    if ticker_map.empty:
+        ticker_map = default_ticker_mapping()
 
     membership_path = save_dataframe(membership, membership_out)
     sectors_path = save_dataframe(sectors, sectors_out)
@@ -82,6 +86,7 @@ def main() -> None:
         "membership_path": str(membership_path),
         "sectors_path": str(sectors_path),
         "ticker_map_path": str(ticker_path),
+        "source": client.source_name,
     }
     print(json.dumps(summary, indent=2))
 

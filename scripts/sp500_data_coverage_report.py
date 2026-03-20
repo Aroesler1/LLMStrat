@@ -44,12 +44,16 @@ def main() -> None:
     if bars.empty or membership.empty:
         raise RuntimeError("Bars and membership files are required for coverage report")
 
-    bars["date"] = pd.to_datetime(bars["date"], errors="coerce").dt.normalize()
-    bars["symbol"] = bars["symbol"].astype(str).str.upper()
+    bars = bars.copy().assign(
+        date=pd.to_datetime(bars["date"], errors="coerce").dt.normalize(),
+        symbol=bars["symbol"].astype(str).str.upper(),
+    )
     bars = bars.dropna(subset=["date", "symbol"])
 
-    membership["date"] = pd.to_datetime(membership["date"], errors="coerce").dt.normalize()
-    membership["symbol"] = membership["symbol"].astype(str).str.upper()
+    membership = membership.copy().assign(
+        date=pd.to_datetime(membership["date"], errors="coerce").dt.normalize(),
+        symbol=membership["symbol"].astype(str).str.upper(),
+    )
     if "active" in membership.columns:
         membership = membership[membership["active"] == True]  # noqa: E712
 

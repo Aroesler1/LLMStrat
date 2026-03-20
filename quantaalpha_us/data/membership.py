@@ -44,9 +44,11 @@ def build_membership_daily(
     if "Code" not in df.columns:
         raise ValueError("Constituents dataframe must include 'Code' column")
 
-    df["Code"] = df["Code"].astype(str).str.upper()
-    df["StartDate"] = pd.to_datetime(df.get("StartDate"), errors="coerce").dt.normalize()
-    df["EndDate"] = pd.to_datetime(df.get("EndDate"), errors="coerce").dt.normalize()
+    df = df.assign(
+        Code=df["Code"].astype(str).str.upper(),
+        StartDate=pd.to_datetime(df.get("StartDate"), errors="coerce").dt.normalize(),
+        EndDate=pd.to_datetime(df.get("EndDate"), errors="coerce").dt.normalize(),
+    )
 
     min_start = df["StartDate"].dropna().min()
     max_end = df["EndDate"].dropna().max()
@@ -74,22 +76,22 @@ def build_membership_daily(
         if active_days.empty:
             continue
 
-        chunks.append(
-            pd.DataFrame(
-                {
-                    "date": active_days,
-                    "symbol": symbol,
-                    "active": True,
-                }
-            )
-        )
+        payload = {
+            "date": active_days,
+            "symbol": symbol,
+            "active": True,
+        }
+        if "permno" in df.columns:
+            permno = getattr(row, "permno", pd.NA)
+            payload["permno"] = [permno] * len(active_days)
+        chunks.append(pd.DataFrame(payload))
 
     if not chunks:
         return pd.DataFrame(columns=["date", "symbol", "active"])
 
     out = pd.concat(chunks, ignore_index=True)
-    out = out.drop_duplicates(subset=["date", "symbol"], keep="last").sort_values(["date", "symbol"])
-    out["active"] = out["active"].astype(bool)
+    out = out.drop_duplicates(subset=["date", "symbol"], keep="last").sort_values(["date", "symbol"]).copy()
+    out = out.assign(active=out["active"].astype(bool))
     return out.reset_index(drop=True)
 
 
@@ -108,8 +110,95 @@ def extract_sector_table(constituents: pd.DataFrame) -> pd.DataFrame:
             "Name": "name",
         }
     )
-    sector_df["symbol"] = sector_df["symbol"].astype(str).str.upper()
+    sector_df = sector_df.assign(symbol=sector_df["symbol"].astype(str).str.upper())
     return sector_df.drop_duplicates(subset=["symbol"]).reset_index(drop=True)
+
+
+def normalize_current_sp500_snapshot(snapshot: pd.DataFrame) -> pd.DataFrame:
+    """Normalize a current-constituents snapshot into the expected constituent schema."""
+    if snapshot.empty:
+        return pd.DataFrame(
+            columns=[
+                "Code",
+                "Exchange",
+                "Name",
+                "Sector",
+                "Industry",
+            ]
+        )
+
+    work = snapshot.copy()
+    rename_map = {
+        "Symbol": "Code",
+        "Ticker": "Code",
+        "Security": "Name",
+        "Company": "Name",
+        "Name": "Name",
+        "GICS Sector": "Sector",
+        "Sector": "Sector",
+        "GICS Sub-Industry": "Industry",
+        "Sub-Industry": "Industry",
+        "Sub Industry": "Industry",
+    }
+    work = work.rename(columns={k: v for k, v in rename_map.items() if k in work.columns})
+
+    if "Code" not in work.columns:
+        raise ValueError("Snapshot dataframe must include Symbol/Ticker column")
+
+    work = work.assign(Code=work["Code"].astype(str).str.upper().str.strip())
+    work = work.assign(Code=work["Code"].str.replace(".", "-", regex=False))
+
+    if "Name" not in work.columns:
+        work = work.assign(Name=work["Code"])
+    if "Sector" not in work.columns:
+        work = work.assign(Sector=pd.NA)
+    if "Industry" not in work.columns:
+        work = work.assign(Industry=pd.NA)
+
+    work = work.assign(Exchange="US")
+    return work[["Code", "Exchange", "Name", "Sector", "Industry"]].drop_duplicates(subset=["Code"]).reset_index(drop=True)
+
+
+def build_constant_membership_from_snapshot(
+    snapshot: pd.DataFrame,
+    *,
+    start_date: str | pd.Timestamp,
+    end_date: str | pd.Timestamp,
+    trading_days: Optional[pd.DatetimeIndex] = None,
+) -> MembershipBuildResult:
+    """
+    Build a constant-membership approximation from a current-constituents snapshot.
+
+    This is a survivorship-biased fallback for research/debugging when historical
+    constituent intervals are unavailable.
+    """
+    current = normalize_current_sp500_snapshot(snapshot)
+    if current.empty:
+        return MembershipBuildResult(
+            membership=pd.DataFrame(columns=["date", "symbol", "active"]),
+            sectors=pd.DataFrame(columns=["symbol", "sector", "industry", "name"]),
+            ticker_mapping=default_ticker_mapping(),
+        )
+
+    constituents = current.copy()
+    constituents["StartDate"] = pd.Timestamp(start_date).normalize()
+    constituents["EndDate"] = pd.Timestamp(end_date).normalize()
+    constituents["IsActiveNow"] = True
+    constituents["IsDelisted"] = False
+
+    membership = build_membership_daily(
+        constituents,
+        start_date=start_date,
+        end_date=end_date,
+        trading_days=trading_days,
+    )
+    sectors = extract_sector_table(constituents)
+    ticker_mapping = default_ticker_mapping()
+    return MembershipBuildResult(
+        membership=membership,
+        sectors=sectors,
+        ticker_mapping=ticker_mapping,
+    )
 
 
 def default_ticker_mapping() -> pd.DataFrame:

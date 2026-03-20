@@ -10,7 +10,12 @@ import pandas as pd
 
 from quantaalpha_us.backtest.costs import TransactionCostModel
 from quantaalpha_us.backtest.universe import SP500Universe
-from quantaalpha_us.pipeline.signal_generator import SignalConfig, generate_signals
+from quantaalpha_us.pipeline.signal_generator import (
+    SignalConfig,
+    baseline_factor_names,
+    build_features,
+    select_signals_from_snapshot,
+)
 
 
 @dataclass
@@ -51,12 +56,16 @@ class WalkForwardResult:
     returns: pd.DataFrame
     folds: list[FoldWindow]
     summary: WalkForwardSummary
+    sector_pnl_share: Optional[dict[str, float]] = None
+    factor_overlap_score: Optional[float] = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "summary": self.summary.to_dict(),
             "folds": [fold.to_dict() for fold in self.folds],
             "rows": int(len(self.returns)),
+            "sector_pnl_share": self.sector_pnl_share,
+            "factor_overlap_score": self.factor_overlap_score,
         }
 
 
@@ -103,14 +112,22 @@ class WalkForwardRunner:
         self.signal_config = SignalConfig(
             top_k=int(portfolio.get("top_k", 30)),
             max_weight=float(portfolio.get("max_weight_per_name", 0.05)),
+            max_sector_weight=float(portfolio.get("max_sector_weight", 1.0)),
             long_only=bool(portfolio.get("long_only", True)),
             max_turnover_daily=float(portfolio.get("max_daily_turnover", 0.20)),
             min_avg_dollar_volume=float(portfolio.get("min_avg_daily_volume_usd", 5_000_000)),
         )
+        retail = config.get("retail_execution", {}) if isinstance(config.get("retail_execution"), dict) else {}
+        self.starting_equity = float(retail.get("starting_equity", 250_000.0))
+        self.cash_buffer_pct = float(retail.get("cash_buffer_pct", 0.02))
+        self.min_trade_dollars = float(retail.get("min_trade_dollars", 25.0))
+        self.fractional_shares = bool(retail.get("fractional_shares", True))
+        self.max_participation_rate = float(retail.get("max_participation_rate", 0.05))
         self.cost_model = TransactionCostModel(
             commission_per_share=float(costs.get("commission_per_share", 0.0)),
             half_spread_bps=float(costs.get("spread_bps", 1.5)),
             slippage_bps=float(costs.get("slippage_bps", 1.0)),
+            impact_coefficient=float(costs.get("impact_coefficient", 0.1)),
         )
 
     @staticmethod
@@ -192,14 +209,15 @@ class WalkForwardRunner:
 
     @staticmethod
     def _normalize_bars(bars: pd.DataFrame) -> pd.DataFrame:
-        work = bars.copy()
-        work["date"] = pd.to_datetime(work["date"], errors="coerce").dt.normalize()
-        work["symbol"] = work["symbol"].astype(str).str.upper()
+        work = bars.copy().assign(
+            date=pd.to_datetime(bars["date"], errors="coerce").dt.normalize(),
+            symbol=bars["symbol"].astype(str).str.upper(),
+        )
         for col in ["open", "high", "low", "close", "adj_close", "volume", "dollar_volume"]:
             if col in work.columns:
-                work[col] = pd.to_numeric(work[col], errors="coerce")
+                work.loc[:, col] = pd.to_numeric(work[col], errors="coerce")
         if "adj_close" not in work.columns:
-            work["adj_close"] = work["close"]
+            work = work.assign(adj_close=work["close"])
         work = work.dropna(subset=["date", "symbol", "open", "close"])
         work = work.sort_values(["date", "symbol"]).reset_index(drop=True)
         return work
@@ -214,8 +232,112 @@ class WalkForwardRunner:
         x = bars_exit[bars_exit["symbol"].isin(symbols)][["symbol", "open"]].rename(columns={"open": "open_exit"})
         merged = e.merge(x, on="symbol", how="inner")
         merged = merged[(merged["open_entry"] > 0) & (merged["open_exit"] > 0)]
-        merged["ret"] = merged["open_exit"] / merged["open_entry"] - 1.0
+        merged = merged.assign(ret=merged["open_exit"] / merged["open_entry"] - 1.0)
         return merged
+
+    def _simulate_retail_rebalance(
+        self,
+        *,
+        signal_df: pd.DataFrame,
+        feature_snapshot: pd.DataFrame,
+        bars_entry: pd.DataFrame,
+        bars_exit: pd.DataFrame,
+        previous_shares: dict[str, float],
+        current_equity: float,
+    ) -> tuple[pd.DataFrame, dict[str, float], dict[str, float], float, float, float]:
+        if signal_df.empty:
+            return pd.DataFrame(), {}, {}, 0.0, 0.0, 0.0
+
+        snapshot = feature_snapshot.copy()
+        if snapshot.empty:
+            return pd.DataFrame(), {}, {}, 0.0, 0.0, 0.0
+        snapshot = snapshot.drop_duplicates(subset=["symbol"]).copy()
+        entry = bars_entry[["symbol", "open"]].rename(columns={"open": "entry_open"}).drop_duplicates(subset=["symbol"])
+        exit_ = bars_exit[["symbol", "open"]].rename(columns={"open": "exit_open"}).drop_duplicates(subset=["symbol"])
+        context = snapshot[["symbol", "adv20", "vol_21d"]].merge(entry, on="symbol", how="inner").merge(exit_, on="symbol", how="inner")
+        context = context[(context["entry_open"] > 0) & (context["exit_open"] > 0)].copy()
+        if context.empty:
+            return pd.DataFrame(), {}, {}, 0.0, 0.0, 0.0
+
+        target_map = {
+            str(row.symbol).upper(): float(row.weight)
+            for row in signal_df.itertuples(index=False)
+            if pd.notna(row.weight) and float(row.weight) > 0
+        }
+        deployable_notional = max(current_equity * (1.0 - self.cash_buffer_pct), 0.0)
+        context = context.assign(
+            symbol=context["symbol"].astype(str).str.upper(),
+            target_weight=context["symbol"].map(target_map).fillna(0.0),
+        )
+
+        current_weights: dict[str, float] = {}
+        target_weights: dict[str, float] = {}
+        new_shares: dict[str, float] = {}
+        turnover = 0.0
+        cost_return = 0.0
+        rows: list[dict[str, Any]] = []
+
+        for row in context.itertuples(index=False):
+            sym = str(row.symbol).upper()
+            entry_px = float(row.entry_open)
+            exit_px = float(row.exit_open)
+            adv20 = float(row.adv20) if pd.notna(row.adv20) else None
+            vol21 = float(row.vol_21d) if pd.notna(row.vol_21d) else None
+
+            current_shares = float(previous_shares.get(sym, 0.0))
+            current_value = current_shares * entry_px
+            raw_target_value = max(deployable_notional * float(row.target_weight), 0.0)
+            delta_value = raw_target_value - current_value
+
+            trade_cap = None
+            if adv20 is not None and adv20 > 0 and self.max_participation_rate > 0:
+                trade_cap = adv20 * self.max_participation_rate
+            if abs(delta_value) < self.min_trade_dollars:
+                adjusted_target_value = current_value
+            elif trade_cap is not None and trade_cap > 0 and abs(delta_value) > trade_cap:
+                adjusted_target_value = max(0.0, current_value + math.copysign(trade_cap, delta_value))
+            else:
+                adjusted_target_value = raw_target_value
+
+            if self.fractional_shares:
+                adjusted_target_shares = adjusted_target_value / entry_px if entry_px > 0 else 0.0
+            else:
+                adjusted_target_shares = math.floor(max(adjusted_target_value, 0.0) / entry_px + 1e-12) if entry_px > 0 else 0.0
+                adjusted_target_value = adjusted_target_shares * entry_px
+
+            trade_notional = abs(adjusted_target_value - current_value)
+            current_weight = current_value / current_equity if current_equity > 0 else 0.0
+            target_weight_actual = adjusted_target_value / current_equity if current_equity > 0 else 0.0
+
+            current_weights[sym] = current_weight
+            if adjusted_target_shares > 1e-10:
+                new_shares[sym] = adjusted_target_shares
+                target_weights[sym] = target_weight_actual
+
+            turnover += 0.5 * abs(target_weight_actual - current_weight)
+            if trade_notional > 0 and current_equity > 0:
+                cost_return += (trade_notional / current_equity) * self.cost_model.estimate_cost_fraction(
+                    trade_notional=trade_notional,
+                    adv_20d=adv20,
+                    daily_vol=vol21,
+                )
+
+            rows.append(
+                {
+                    "symbol": sym,
+                    "entry_open": entry_px,
+                    "exit_open": exit_px,
+                    "ret": exit_px / entry_px - 1.0,
+                    "weight": target_weight_actual,
+                    "current_weight": current_weight,
+                    "trade_notional": trade_notional,
+                }
+            )
+
+        merged = pd.DataFrame(rows)
+        merged = merged[merged["weight"] > 0].copy()
+        gross_return = float((merged["weight"] * merged["ret"]).sum()) if not merged.empty else 0.0
+        return merged, new_shares, target_weights, turnover, cost_return, gross_return
 
     def run(
         self,
@@ -223,87 +345,103 @@ class WalkForwardRunner:
         bars: pd.DataFrame,
         universe: SP500Universe,
         output_dir: Optional[Path] = None,
+        sector_map: Optional[dict[str, str]] = None,
     ) -> WalkForwardResult:
         data = self._normalize_bars(bars)
+        data = data.assign(mom_252=data.groupby("symbol")["adj_close"].pct_change(252))
+        features = build_features(data)
+        features_by_date = {
+            pd.Timestamp(day).normalize(): group.reset_index(drop=True)
+            for day, group in features.groupby("date", sort=False)
+        }
+        bars_by_date = {
+            pd.Timestamp(day).normalize(): group.reset_index(drop=True)
+            for day, group in data.groupby("date", sort=False)
+        }
         dates = pd.DatetimeIndex(sorted(data["date"].dropna().unique())).normalize()
         folds = self.build_folds(dates)
         if not folds:
             raise RuntimeError("Unable to build walk-forward folds from available data")
 
         records: list[dict[str, Any]] = []
+        sector_contrib_abs: dict[str, float] = {}
+        factor_sets: list[set[str]] = []
         for fold in folds:
             fold_test_dates = dates[(dates >= fold.test_start) & (dates <= fold.test_end)]
             previous_weights: Optional[dict[str, float]] = None
+            previous_shares: dict[str, float] = {}
+            current_equity = self.starting_equity
 
             for as_of in fold_test_dates:
-                history_start = pd.Timestamp(as_of) - pd.Timedelta(days=self.history_window_days)
-                history = data[(data["date"] >= history_start) & (data["date"] <= as_of)]
                 active = universe.get_members(as_of)
                 if not active:
                     continue
 
-                signal_df = generate_signals(
-                    history,
+                feature_snapshot = features_by_date.get(pd.Timestamp(as_of).normalize(), pd.DataFrame())
+                signal_df = select_signals_from_snapshot(
+                    feature_snapshot,
                     config=self.signal_config,
-                    as_of=as_of,
                     active_universe=active,
                     previous_weights=previous_weights,
+                    sector_map=sector_map,
                 )
                 if signal_df.empty:
                     continue
+                factor_sets.append(set(baseline_factor_names()))
 
                 entry_date = self._shift_trading_days(dates, as_of, self.signal_lag_days)
                 exit_date = self._shift_trading_days(dates, entry_date, self.label_horizon_days) if entry_date is not None else None
                 if entry_date is None or exit_date is None:
                     continue
 
-                bars_entry = data[data["date"] == entry_date]
-                bars_exit = data[data["date"] == exit_date]
-                symbols = signal_df["symbol"].astype(str).str.upper().tolist()
-                sym_rets = self._open_return_for_symbols(bars_entry, bars_exit, symbols)
-                if sym_rets.empty:
-                    continue
-
-                merged = signal_df.merge(sym_rets[["symbol", "ret"]], on="symbol", how="inner")
+                bars_entry = bars_by_date.get(pd.Timestamp(entry_date).normalize(), pd.DataFrame())
+                bars_exit = bars_by_date.get(pd.Timestamp(exit_date).normalize(), pd.DataFrame())
+                merged, current_shares, current_weights_actual, turnover, cost_return, gross_return = self._simulate_retail_rebalance(
+                    signal_df=signal_df,
+                    feature_snapshot=feature_snapshot,
+                    bars_entry=bars_entry,
+                    bars_exit=bars_exit,
+                    previous_shares=previous_shares,
+                    current_equity=current_equity,
+                )
                 if merged.empty:
                     continue
-
-                gross_return = float((merged["weight"] * merged["ret"]).sum())
-                curr_weights = {str(r.symbol).upper(): float(r.weight) for r in merged.itertuples(index=False)}
-                if previous_weights:
-                    all_syms = set(previous_weights) | set(curr_weights)
-                    turnover = float(sum(abs(curr_weights.get(s, 0.0) - previous_weights.get(s, 0.0)) for s in all_syms))
-                else:
-                    turnover = float(sum(abs(w) for w in curr_weights.values()))
-                cost_return = turnover * (
-                    (self.cost_model.half_spread_bps + self.cost_model.slippage_bps) / 10000.0
-                )
                 net_return = gross_return - cost_return
+                current_equity *= 1.0 + net_return
+                curr_weights = dict(current_weights_actual)
+                gross_exposure = float(sum(curr_weights.values()))
+
+                if sector_map:
+                    merged = merged.assign(
+                        sector=merged["symbol"].astype(str).str.upper().map(lambda s: sector_map.get(s, "Unknown")),
+                        abs_contrib=(
+                            pd.to_numeric(merged["weight"], errors="coerce")
+                            * pd.to_numeric(merged["ret"], errors="coerce")
+                        ).abs(),
+                    )
+                    sector_daily = merged.groupby("sector", dropna=False)["abs_contrib"].sum()
+                    for sector, contrib in sector_daily.items():
+                        key = str(sector or "Unknown")
+                        sector_contrib_abs[key] = sector_contrib_abs.get(key, 0.0) + float(contrib)
 
                 # Baselines for gate-7.
                 spy_ret = float("nan")
                 spy_df = self._open_return_for_symbols(bars_entry, bars_exit, ["SPY"])
                 if not spy_df.empty:
-                    spy_ret = float(spy_df["ret"].iloc[0])
+                    spy_ret = float(spy_df["ret"].iloc[0]) * (1.0 - self.cash_buffer_pct)
 
                 active_rets = self._open_return_for_symbols(bars_entry, bars_exit, active)
-                eqw_ret = float(active_rets["ret"].mean()) if not active_rets.empty else float("nan")
+                eqw_ret = float(active_rets["ret"].mean()) * (1.0 - self.cash_buffer_pct) if not active_rets.empty else float("nan")
 
                 mom_ret = float("nan")
-                lookback = history[history["date"] <= as_of].copy()
-                if not lookback.empty and "adj_close" in lookback.columns:
-                    mom = (
-                        lookback.sort_values(["symbol", "date"])
-                        .groupby("symbol")["adj_close"]
-                        .pct_change(252)
-                    )
-                    lookback = lookback.assign(mom_252=mom)
-                    latest = lookback[lookback["date"] == as_of][["symbol", "mom_252"]].dropna()
+                latest = bars_by_date.get(pd.Timestamp(as_of).normalize(), pd.DataFrame())
+                if not latest.empty and "mom_252" in latest.columns:
+                    latest = latest[["symbol", "mom_252"]].dropna()
                     if not latest.empty:
                         top = latest.nlargest(self.signal_config.top_k, "mom_252")["symbol"].astype(str).tolist()
                         top_rets = self._open_return_for_symbols(bars_entry, bars_exit, top)
                         if not top_rets.empty:
-                            mom_ret = float(top_rets["ret"].mean())
+                            mom_ret = float(top_rets["ret"].mean()) * (1.0 - self.cash_buffer_pct)
 
                 records.append(
                     {
@@ -313,6 +451,9 @@ class WalkForwardRunner:
                         "exit_date": str(pd.Timestamp(exit_date).date()),
                         "positions": int(len(curr_weights)),
                         "turnover": turnover,
+                        "gross_exposure": gross_exposure,
+                        "cash_weight": max(0.0, 1.0 - gross_exposure),
+                        "portfolio_equity": current_equity,
                         "gross_return": gross_return,
                         "cost_return": cost_return,
                         "net_return": net_return,
@@ -322,6 +463,7 @@ class WalkForwardRunner:
                     }
                 )
                 previous_weights = curr_weights
+                previous_shares = current_shares
 
         returns = pd.DataFrame(records)
         if returns.empty:
@@ -341,7 +483,20 @@ class WalkForwardRunner:
             max_drawdown=_max_drawdown(returns["net_return"]),
             cumulative_net_return=cumulative,
         )
-        result = WalkForwardResult(returns=returns, folds=folds, summary=summary)
+        total_sector_abs = sum(sector_contrib_abs.values())
+        sector_pnl_share = (
+            {k: float(v) / total_sector_abs for k, v in sector_contrib_abs.items() if total_sector_abs > 0}
+            if total_sector_abs > 0
+            else None
+        )
+        factor_overlap_score = 1.0 if factor_sets else None
+        result = WalkForwardResult(
+            returns=returns,
+            folds=folds,
+            summary=summary,
+            sector_pnl_share=sector_pnl_share,
+            factor_overlap_score=factor_overlap_score,
+        )
 
         if output_dir is not None:
             output_dir.mkdir(parents=True, exist_ok=True)
