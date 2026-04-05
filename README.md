@@ -1,222 +1,65 @@
-# QuantaAlpha US
+# LLMStrat
 
-`QuantaAlpha_US` is a standalone US equities research and execution stack focused on daily S&P 500 strategies. The project is designed around a practical institutional-style workflow:
+LLMStrat is a US equities research and execution stack for daily S&P 500 alpha mining. It builds a point-in-time universe, maintains market data, evaluates candidate signals with walk-forward controls, and can route approved portfolios into Alpaca paper or live trading with explicit risk checks.
 
-- construct a point-in-time investable universe
-- maintain daily market data
-- generate and evaluate signals
-- run walk-forward research with explicit promotion gates
-- mine new factors with frontier LLMs under strict runtime controls
-- deploy through a retail-accessible broker stack with realistic execution assumptions
+## Repository layout
 
-The repo is intentionally opinionated. It favors traceable data lineage, explicit validation, and operational safeguards over polished abstractions or optimistic research shortcuts.
+- `configs/`: research, paper, live, and LLM runtime configuration
+- `quantaalpha_us/`: reusable package code for data, factors, backtests, and execution
+- `scripts/`: entry points for universe construction, ingestion, research, signal generation, and trading
+- `tests/`: regression coverage for data quality, factor mining, risk controls, and walk-forward validation
+- `bootstrap.sh`: one-command environment setup for a fresh clone
 
-## What The System Does
+## Setup
 
-At a high level, the program implements a daily US equities workflow for S&P 500 strategies:
+```bash
+./bootstrap.sh
+source .venv/bin/activate
+```
 
-1. source a historical or approximate point-in-time universe
-2. ingest and normalize daily OHLCV data
-3. validate the integrity and coverage of that dataset
-4. compute baseline cross-sectional features
-5. construct a constrained long-only portfolio
-6. evaluate that portfolio in a walk-forward backtest with costs and validation gates
-7. optionally generate new factor candidates with frontier LLMs under strict controls
-8. submit paper or live rebalance orders through Alpaca with pre-trade and post-trade checks
+## CLI usage
 
-In practical terms, this is a research-to-execution system for daily systematic equity strategies rather than a standalone model-training repository or a collection of notebooks.
+Build or refresh the S&P 500 membership table:
 
-## End-To-End Process
+```bash
+python scripts/sp500_build_membership.py --help
+```
 
-The full process is intentionally staged so that each output becomes the input to the next step.
+Backfill or refresh daily market data:
 
-### Stage 1: Universe Construction
+```bash
+python scripts/sp500_ingest_daily.py --help
+```
 
-The pipeline begins by constructing the investable S&P 500 universe.
+Run the core walk-forward research loop:
 
-In research-grade mode, the system pulls constituent history from CRSP or from EODHD fundamentals. That history is converted into a daily point-in-time membership table with one row per symbol per trading date. The membership artifact answers a simple but critical question for every date in the backtest: which names were actually in the index at that moment.
+```bash
+python scripts/sp500_run_research.py --config configs/backtest_sp500_research.yaml
+```
 
-In approximate mode, the system starts from a current constituent snapshot and expands it across trading dates to produce a constant-membership approximation. That path is useful for bring-up and engineering validation, but it is deliberately kept separate from research-grade handling because it does not preserve true historical composition changes.
+## Methodology
 
-The output of this stage is:
+The system is organized as a staged research pipeline rather than a single notebook. It first constructs a point-in-time investable universe, ingests and validates daily OHLCV data, and computes baseline cross-sectional features. Those signals feed a constrained long-only portfolio construction step, which is then evaluated in walk-forward windows with explicit costs, turnover limits, and promotion gates. Frontier LLMs are used only for bounded factor ideation and are surrounded by validation, budget controls, and expression sanitization before any candidate reaches research or trading.
 
-- a daily membership file
-- a sector reference file
-- a ticker mapping file for symbol changes and normalization
+## Output
 
-### Stage 2: Historical Data Ingestion
+Typical runs produce:
 
-Once the universe exists, the system retrieves daily OHLCV history for the relevant names.
+- point-in-time universe and reference tables under `data/us_equities`
+- processed bars and coverage artifacts for daily research
+- signal files and walk-forward backtest outputs
+- factor-mining candidate files and validation summaries
+- broker-facing rebalance intents for paper or live deployment
 
-When CRSP is available, the backfill path uses stable identifiers such as `permno` where possible and translates the result back into symbol-level research artifacts. When CRSP is unavailable, the same workflow can be fed by EODHD.
+## Known limits
 
-During ingestion, the system normalizes:
+- Research quality still depends on the quality and timeliness of external data providers
+- Daily signals and retail-oriented execution assumptions are intentionally conservative and do not represent intraday HFT infrastructure
+- LLM factor generation is bounded and audited, but it still needs human judgment before production use
 
-- dates
-- symbols
-- OHLCV column names
-- adjusted close handling
-- dollar volume
+## Notes
 
-The purpose of this stage is not only to download data, but to transform vendor-specific outputs into a stable internal format that later research and trading steps can rely on.
-
-The output of this stage is a consolidated daily bars artifact under `data/us_equities/processed/`.
-
-### Stage 3: Data Quality Validation
-
-Before the system generates signals or runs research, it checks whether the market data is credible enough to continue.
-
-The quality layer verifies things like:
-
-- freshness relative to the target date
-- completeness against the expected active universe
-- OHLC consistency
-- duplicate rows
-- unexplained return outliers
-- unexpected active-symbol gaps
-- adjusted-price consistency
-
-This stage is important because it prevents downstream research from quietly proceeding on corrupted or partial datasets. In other words, the system is designed to fail early when market data quality is inadequate.
-
-### Stage 4: Feature Construction
-
-After the bars pass quality checks, the pipeline computes a baseline daily feature set from OHLCV only.
-
-The current baseline includes cross-sectional and time-series features derived from:
-
-- short-horizon momentum
-- medium-horizon momentum
-- short-term reversal
-- realized volatility
-- volatility ratio behavior
-- volume acceleration
-- intraday range behavior
-
-The features are ranked cross-sectionally by date, then combined into a composite score. This keeps the baseline intentionally simple and interpretable while still providing a usable starting point for research and portfolio construction.
-
-### Stage 5: Signal Generation
-
-The signal-generation step takes the daily feature snapshot for a specific date and turns it into a tradable portfolio.
-
-The process is roughly:
-
-1. filter to the active point-in-time universe
-2. remove names that fail liquidity thresholds
-3. rank names by composite score
-4. select the highest-ranked names up to `top_k`
-5. apply per-name caps
-6. apply sector caps
-7. apply turnover control relative to the previous portfolio
-8. output target weights
-
-The resulting signal file is not just a list of scores. It is an actual constrained target portfolio that can feed either research or trading.
-
-### Stage 6: Walk-Forward Research
-
-The research engine evaluates the strategy in rolling walk-forward windows rather than a single in-sample fit.
-
-The walk-forward runner:
-
-1. builds train, validation, and test windows
-2. steps through each test date in chronological order
-3. uses only the information available up to that date
-4. generates the target portfolio for that date
-5. applies execution alignment and cost assumptions
-6. records realized out-of-sample returns
-
-This is a deliberately conservative structure. It is designed to avoid the common failure mode where research results are driven by implicit lookahead, static universes, or unrealistic turnover assumptions.
-
-### Stage 7: Retail-Oriented Execution Simulation
-
-The backtest does not assume frictionless deployment.
-
-Instead, the research path includes a retail-aware execution model that attempts to approximate the operational constraints of a real daily account:
-
-- next-day open execution
-- retained cash buffer
-- minimum trade-size filtering
-- participation limits relative to ADV
-- fractional-share support
-- spread and slippage costs
-- liquidity-sensitive impact estimation
-
-The simulation maintains a portfolio state over time, rather than recomputing each day as if the account could reset frictionlessly. That matters because it allows turnover, residual exposure, and trading frictions to accumulate in a more realistic way.
-
-### Stage 8: Research Validation Gates
-
-Once the walk-forward run is complete, the system evaluates the results against explicit validation gates.
-
-These gates are intended to answer whether the strategy deserves promotion, not just whether it produced a positive backtest.
-
-The current validation layer checks:
-
-- deflated Sharpe
-- subperiod stability
-- sector concentration
-- max drawdown
-- turnover
-- factor-overlap stability
-- baseline comparison
-- net Sharpe
-
-This stage is central to the project philosophy. A strategy that produces returns but fails robustness gates is treated as unfinished research, not as a success story.
-
-### Stage 9: Factor Mining
-
-The factor-mining subsystem is separate from the baseline strategy and is designed to generate candidate expressions rather than directly trade model output.
-
-Its workflow is:
-
-1. assemble a prompt batch for a specific factor-generation theme
-2. call the configured frontier model
-3. enforce exact model policy and fallback order
-4. parse the returned JSON
-5. sanitize each candidate expression
-6. reject invalid or disallowed expressions
-7. stop early if invalid output rates exceed threshold
-8. store surviving factors as research candidates
-
-This makes the LLM runtime a controlled ideation engine rather than an unbounded text-generation layer.
-
-### Stage 10: Order Formation And Trade Submission
-
-When the system is used in paper or live mode, the generated portfolio weights are translated into broker-facing order intents.
-
-That translation includes:
-
-- loading the latest signal file
-- reading current account equity and buying power
-- calculating deployable capital after the configured cash buffer
-- mapping target weights to target dollar exposure
-- comparing target exposure with current positions
-- generating buy and sell deltas
-- filtering out trivial trades
-
-The system then runs pre-trade checks before any order is submitted.
-
-### Stage 11: Pre-Trade And Post-Trade Risk Controls
-
-The trading path includes operational guardrails before and after submission.
-
-Pre-trade checks include:
-
-- total notional limits
-- single-order size limits
-- active-universe membership checks
-- data freshness checks
-- portfolio weight constraints
-- buying power checks
-- kill-switch status
-- trading-session validity
-
-Post-trade checks include:
-
-- order status inspection
-- slippage checks relative to expected prices
-- reconciliation between target and realized portfolio weights
-- cash sanity checks
-
-These checks are there to make the execution layer behave like a trading system rather than a thin API wrapper.
+The repository is maintained at `Aroesler1/LLMStrat` and keeps the `quantaalpha_us` module path for runtime compatibility with earlier internal tooling
 
 ## Project Scope
 

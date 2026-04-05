@@ -7,6 +7,9 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.ipynb_checkpoints/
+.vscode/
+.idea/
 
 data/us_equities/raw/
 data/us_equities/processed/
